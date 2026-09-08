@@ -72,13 +72,13 @@ deploy/docker-compose.yml                        infra profile: neo4j, mongo, re
 - Consumes: nothing
 - Produces: parent POM coordinates `com.bloom.eventmanager:bloom-parent:0.0.1-SNAPSHOT` (packaging `pom`), which every later module declares as its `<parent>`; and `com.bloom.eventmanager:bloom-bom:0.0.1-SNAPSHOT`, imported by modules needing third-party pins.
 
-- [ ] **Step 1: Confirm the current (wrong) baseline**
+- [x] **Step 1: Confirm the current (wrong) baseline**
 
 Run: `./mvnw -q help:evaluate -Dexpression=project.parent.version -DforceStdout`
 
 Expected: prints `4.1.1` — the version Spring Cloud 2025.1.3 does not support. This is the failing state.
 
-- [ ] **Step 2: Replace the root `pom.xml`**
+- [x] **Step 2: Replace the root `pom.xml`**
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -126,7 +126,7 @@ Expected: prints `4.1.1` — the version Spring Cloud 2025.1.3 does not support.
 
 Note there is no `<build><plugins>` block: `spring-boot-starter-parent` already provides `pluginManagement` for `spring-boot-maven-plugin`, and declaring it here would try to repackage the `pom` module.
 
-- [ ] **Step 3: Create `platform/bloom-bom/pom.xml`**
+- [x] **Step 3: Create `platform/bloom-bom/pom.xml`**
 
 This module pins versions that Spring's BOMs do not manage. Versions are transcribed from spec section 8; do not change them.
 
@@ -200,7 +200,7 @@ This module pins versions that Spring's BOMs do not manage. Versions are transcr
 </project>
 ```
 
-- [ ] **Step 4: Delete the skeleton source tree**
+- [x] **Step 4: Delete the skeleton source tree**
 
 ```bash
 rm -rf src
@@ -208,7 +208,7 @@ rm -rf src
 
 The root module is `packaging: pom` and cannot carry sources. `Application.java`, `ApplicationTests.java`, and `application.properties` all reappear in the correct modules in later tasks.
 
-- [ ] **Step 5: Verify the baseline is now correct**
+- [x] **Step 5: Verify the baseline is now correct**
 
 Run: `./mvnw -q help:evaluate -Dexpression=project.parent.version -DforceStdout`
 Expected: prints `4.0.8`
@@ -216,7 +216,7 @@ Expected: prints `4.0.8`
 Run: `./mvnw -q clean install`
 Expected: BUILD SUCCESS, two modules reacted (`bloom-parent`, `bloom-bom`)
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add -A
