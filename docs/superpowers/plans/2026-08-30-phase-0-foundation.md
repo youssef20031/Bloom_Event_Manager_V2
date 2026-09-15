@@ -22,8 +22,9 @@ Every task's requirements implicitly include this section. Values are copied ver
 - **Boot 4.0 split the test-support classes into per-technology modules, and `spring-boot-starter-test` brings none of them.** Declare the one you need test-scoped (all are managed by the Boot BOM, so no explicit version). Verified against 4.0.8:
   - `TestRestTemplate` → `spring-boot-resttestclient`, package `org.springframework.boot.resttestclient`. The bean is gated behind `@AutoConfigureTestRestTemplate`, and its auto-configuration also needs `spring-boot-restclient` for `RestTemplateBuilder` — declare both (Task 4).
   - `@WebMvcTest` → `spring-boot-webmvc-test`, package `org.springframework.boot.webmvc.test.autoconfigure` (Task 6).
-  - `MockMvc` and its matchers stay in `spring-test` at `org.springframework.test.web.servlet` — unchanged.
-  - Expect the same shape for any other `org.springframework.boot.test.autoconfigure.*` import the plan still names.
+  - `WebTestClient` → `spring-boot-webtestclient`, gated behind `@AutoConfigureWebTestClient` from `org.springframework.boot.webtestclient.autoconfigure` (Task 7).
+  - `MockMvc`, its matchers, and `WebTestClient` itself stay in `spring-test` (`org.springframework.test.web.servlet` / `org.springframework.test.web.reactive.server`) — only the Boot auto-configuration moved.
+  - `spring-boot-starter-test` still brings its usual 16 transitive deps (JUnit, AssertJ, Mockito, `spring-test`, `spring-boot-test-autoconfigure`); it is the per-technology modules above that were carved out of it.
 - **Gateway artifact is `spring-cloud-starter-gateway-server-webflux`.** The old `spring-cloud-starter-gateway` does not exist at gateway module version 5.0.3 — verified 404 on Maven Central.
 - **Gateway config prefix is `spring.cloud.gateway.server.webflux.*`.** Not the legacy `spring.cloud.gateway.*` — verified against the jar's `spring-configuration-metadata.json`.
 - **Boot 4 starter names:** `spring-boot-starter-webmvc` (not `-web`), `spring-boot-starter-data-mongodb`, `spring-boot-starter-data-redis`.
@@ -1424,7 +1425,7 @@ Routes live in this module's `application.yml` for Phase 0 rather than in `confi
 
 No authentication in this phase — JWT is Phase 5 per the spec.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `LegacyOAuthRedirectControllerTest.java`:
 
@@ -1434,6 +1435,7 @@ package com.bloom.eventmanager.gateway;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.webtestclient.autoconfigure.AutoConfigureWebTestClient;
 import org.springframework.test.web.reactive.server.WebTestClient;
 
 @SpringBootTest(
@@ -1443,6 +1445,7 @@ import org.springframework.test.web.reactive.server.WebTestClient;
                 "eureka.client.enabled=false",
                 "spring.cloud.discovery.enabled=false"
         })
+@AutoConfigureWebTestClient
 class LegacyOAuthRedirectControllerTest {
 
     @Autowired
@@ -1516,7 +1519,7 @@ class GatewayRouteDefinitionTest {
 }
 ```
 
-- [ ] **Step 2: Create the module POM**
+- [x] **Step 2: Create the module POM**
 
 Note the artifact name: `spring-cloud-starter-gateway-server-webflux`. The old `spring-cloud-starter-gateway` does not exist at this train.
 
@@ -1559,6 +1562,15 @@ Note the artifact name: `spring-cloud-starter-gateway-server-webflux`. The old `
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- Boot 4.0 moved WebTestClient support out of
+             spring-boot-test-autoconfigure into its own module; the bean is
+             gated behind @AutoConfigureWebTestClient. Same split as
+             TestRestTemplate in Task 4 and @WebMvcTest in Task 6. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-webtestclient</artifactId>
+            <scope>test</scope>
+        </dependency>
         <dependency>
             <groupId>io.projectreactor</groupId>
             <artifactId>reactor-test</artifactId>
@@ -1579,12 +1591,14 @@ Note the artifact name: `spring-cloud-starter-gateway-server-webflux`. The old `
 
 Add `<module>infrastructure/api-gateway</module>` to the root `pom.xml`.
 
-- [ ] **Step 3: Run the tests to verify they fail**
+- [x] **Step 3: Run the tests to verify they fail**
 
 Run: `./mvnw -q -pl infrastructure/api-gateway test`
-Expected: COMPILATION FAILURE — `cannot find symbol: class ApiGatewayApplication`
+Expected: both classes fail with `IllegalStateException: Unable to find a @SpringBootConfiguration by searching packages upwards from the test`
 
-- [ ] **Step 4: Write the implementation**
+Not a compilation failure — as in Tasks 4 and 5, the tests discover the application class by package scan rather than naming it.
+
+- [x] **Step 4: Write the implementation**
 
 `ApiGatewayApplication.java`:
 
@@ -1686,12 +1700,12 @@ management:
         enabled: true
 ```
 
-- [ ] **Step 5: Run the tests to verify they pass**
+- [x] **Step 5: Run the tests to verify they pass**
 
 Run: `./mvnw -q -pl infrastructure/api-gateway test`
 Expected: PASS, 4 tests
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add -A

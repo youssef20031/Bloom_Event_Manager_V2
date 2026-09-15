@@ -30,6 +30,7 @@
         <module>infrastructure/discovery-server</module>
         <module>infrastructure/config-server</module>
         <module>services/knowledge-service</module>
+        <module>infrastructure/api-gateway</module>
     </modules>
 
     <dependencyManagement>

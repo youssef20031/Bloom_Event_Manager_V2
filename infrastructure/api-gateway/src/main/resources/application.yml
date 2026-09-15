@@ -1,0 +1,34 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: api-gateway
+  config:
+    import: optional:configserver:${CONFIG_SERVER_URL:http://localhost:8888}
+  cloud:
+    gateway:
+      server:
+        webflux:
+          discovery:
+            locator:
+              # Routes are declared explicitly below. Automatic discovery-based
+              # routing would also expose every service under its own id.
+              enabled: false
+          routes:
+            - id: knowledge-ping
+              uri: lb://knowledge-service
+              predicates:
+                - Path=/api/v1/rag/ping
+              filters:
+                - RewritePath=/api/v1/rag/ping,/api/v1/ping
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,gateway
+  endpoint:
+    health:
+      probes:
+        enabled: true
