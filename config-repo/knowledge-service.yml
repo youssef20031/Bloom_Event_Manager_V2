@@ -1,6 +1,27 @@
 server:
   port: 8082
 
+spring:
+  neo4j:
+    uri: ${NEO4J_URI:bolt://localhost:7687}
+    authentication:
+      username: ${NEO4J_USER:neo4j}
+      password: ${NEO4J_PASSWORD:password}
+
 bloom:
+  knowledge:
+    vector-index-name: chunk_embeddings
+    # Must match gemini-embedding-001. Changing the model is an index migration, not a config edit.
+    embedding-dimensions: 3072
+    similarity-function: cosine
   config-server:
     reachable: true
+
+management:
+  endpoint:
+    health:
+      group:
+        # V1's /health/ready gated on Neo4j. Boot's readiness group contains only
+        # readinessState by default; add the Neo4j indicator explicitly.
+        readiness:
+          include: readinessState,neo4j
