@@ -85,3 +85,68 @@ There is no authentication in Phase 0 — JWT and Spring Security arrive in
 Phase 5. The Config Server on 8888 serves `config-repo/` to any caller that
 can reach it, so keep real secrets in `deploy/.env` and out of `config-repo/`,
 and keep these ports on localhost.
+
+## Phase 1 verification (2026-09-15)
+
+The data spine was verified end to end against a copy of V1's production
+Neo4j (24 `Document` nodes, 110 `Chunk` nodes, 3072-dimension embeddings,
+with the `chunk_embeddings` index already present) and a real Gemini key.
+
+`./mvnw clean install` — BUILD SUCCESS across nine reactor projects.
+`knowledge-service` logged `Vector index 'chunk_embeddings' already exists`,
+confirming it was reading V1's data rather than an empty database.
+
+Embedding the query *"team building activities for a non-profit"* through
+`POST /api/v1/ai/embed` returned 3072 dimensions and wrote
+`bloom:embed:gemini-embedding-001:cfb70af6119cb3667dd93529e6f937a0`;
+repeating the call returned a byte-identical response from cache. Feeding
+that vector to `POST /api/v1/chunks/search` returned, in descending score
+order:
+
+| source | score |
+| --- | --- |
+| `dell/Customer_Brief_2026-07-29T14-23-15.pdf` | 0.8361 |
+| `Activity_Library.pdf` | 0.8354 |
+| `Activity_Library.pdf` | 0.8342 |
+| `Activity_Library.pdf` | 0.8334 |
+| `dell/Customer_Brief_2026-07-22T14-11-44.pdf` | 0.8328 |
+
+Use this as the reference corpus for later phases: three of the five top
+hits come from `Activity_Library.pdf`, which is the semantically right
+document for that query.
+
+`POST /api/v1/ai/generate` with `includeThoughts` returned populated `text`
+and `thoughts` fields, confirming thought/answer splitting works against the
+live API and not only against mocks.
+
+With Redis stopped, `POST /api/v1/ai/embed` still answered `200` with a
+3072-dimension vector for an uncached phrase, and readiness stayed `UP`
+while `/actuator/health` reported `DOWN`. That split is deliberate: a Redis
+outage is visible to operators but never removes the service from rotation.
+
+### Sources in V1's corpus
+
+Ten of the 24 ingested documents carry slashes in their source names
+(`Dell Technologies/…`, `Teambuilding/candylove/candylove.pdf`, `dell/…`).
+This is why `DELETE /api/v1/documents` takes `?source=` as a query parameter
+rather than a path variable — a path variable cannot carry them. Do not
+"fix" it back.
+
+V1's database also contains a second vector index,
+`knowledge_chunk_embeddings`, alongside `chunk_embeddings`. It appears to be
+residue from V1's abandoned `Neo4jChunkRepository.ts`, which is deliberately
+not ported. Phase 1 addresses its index by configured name and is unaffected;
+Phase 3 writes to this database and should account for it.
+
+### Known limitation: Gemini retries
+
+`GeminiClientConfig` passes Spring AI's `RetryUtils.DEFAULT_RETRY_TEMPLATE` to
+the chat model, but that template only matches `TransientAiException` and
+`ResourceAccessException`, and `spring-ai-google-genai` 2.0.1 throws neither —
+the SDK raises `com.google.genai.errors.ApiException`. Nothing on the Gemini
+path is therefore actually retried, so a transient 5xx or a socket blip fails
+the request immediately, and only 429 and 404 walk the model-fallback chain.
+This is not a regression from V1, which behaved the same way, and one side
+effect is welcome: a quota error reaches the next model at once instead of
+after ten backoff attempts. It does mean **Phase 5 must not assume a working
+retry layer already exists** when it adds circuit breakers.
