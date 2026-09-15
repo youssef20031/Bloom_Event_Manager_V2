@@ -5,7 +5,7 @@ Spring microservices rebuild of the Bloom Event Manager. The V1 monolith
 reference implementation.
 
 - **Design spec:** `docs/superpowers/specs/2026-08-30-bloom-spring-microservices-design.md`
-- **Current phase:** Phase 0 — Foundation
+- **Current phase:** Phase 2 — Read path
 
 ## Stack
 
@@ -31,6 +31,8 @@ Boot 4.0 also split its test support into per-technology modules that
 | `infrastructure/config-server` | 8888 | Config Server, native backend over `config-repo/` |
 | `infrastructure/api-gateway` | 8080 | Single public entry point |
 | `services/knowledge-service` | 8082 | Skeleton; owns Neo4j from Phase 1 |
+| `services/ai-service` | 8081 | Gemini embedding and generation, Redis-cached |
+| `services/retrieval-service` | 8084 | Dual-search orchestration; owns no data |
 
 ## Running locally
 
@@ -150,3 +152,67 @@ This is not a regression from V1, which behaved the same way, and one side
 effect is welcome: a quota error reaches the next model at once instead of
 after ten backoff attempts. It does mean **Phase 5 must not assume a working
 retry layer already exists** when it adds circuit breakers.
+
+## Phase 2 verification (2026-09-15)
+
+`./mvnw clean install` — BUILD SUCCESS across ten reactor projects, 115 tests.
+
+`retrieval-service` started on 8084 and registered as `RETRIEVAL-SERVICE`
+(Eureka registration status 204). Its `/actuator/health` reports only
+`clientConfigServer`, `discoveryComposite`, `diskSpace`, `livenessState`,
+`ping`, `readinessState`, `refreshScope` and `ssl` — **no datastore
+component**, which is the phase's structural claim: retrieval owns no data
+and reaches everything over Feign.
+
+Routing was confirmed end to end against a gateway built from this branch.
+`POST /api/v1/rag/retrieve` returned a ProblemDetail whose `instance` field
+read `/api/v1/retrieve`, proving the `RewritePath` filter rewrote V1's public
+path and that `lb://retrieval-service` resolved through Eureka.
+
+Failure classification, both directions, verified live:
+
+| Condition | Result |
+| --- | --- |
+| `ai-service` not running, query given | `502` `EXTERNAL_SERVICE_ERROR`, detail `Could not obtain query embedding from ai-service` |
+| `knowledge-service` failing, embedding supplied | `502` `EXTERNAL_SERVICE_ERROR`, detail `Vector search failed in knowledge-service` |
+| Neither `query` nor `queryEmbedding` | `400` `VALIDATION_FAILED`, detail `queryEmbedding must be a non-empty array` (V1's message) |
+| `topK: 0` | `400` `VALIDATION_FAILED` |
+
+No request produced a `500` or a hang, which is the property Phase 5's
+circuit breakers will wrap.
+
+### Outstanding: V1 parity is not yet measured
+
+The plan's parity check (plain-path chunk ids identical to V1's, AI-path
+overlap ≥ 70%) **has not been run.** It needs two things this machine did
+not have at the time: a `GEMINI_API_KEY`, and V1's corpus in Neo4j — the
+`bloom-v2-neo4j` container was empty (0 nodes, no `chunk_embeddings` index),
+so no vector search could return anything to compare. Restore the Phase 1
+corpus, export the key, start `ai-service`, then run:
+
+```bash
+BODY='{"query": "team building activities for a non-profit", "topK": 5, "useAI": false}'
+
+curl -s -u "$APP_AUTH_USER:$APP_AUTH_PASSWORD" -X POST http://localhost:3000/api/v1/rag/retrieve \
+     -H "Content-Type: application/json" -d "$BODY" | jq -r '.chunks[].id' > v1.txt
+curl -s -X POST http://localhost:8080/api/v1/rag/retrieve \
+     -H "Content-Type: application/json" -d "$BODY" | jq -r '.chunks[].id' > v2.txt
+
+diff v1.txt v2.txt && echo "IDENTICAL"
+```
+
+`useAI: false` puts no model in the loop, so the two must agree exactly. If
+they differ, check that both point at the same `NEO4J_URI` and that V1's
+`.env` sets `GEMINI_EMBEDDING_MODEL=gemini-embedding-001` — a different model
+yields a different vector and a different cache key.
+
+### Caching is enabled off the application class
+
+`@EnableCaching` lives on `retrieval/config/CachingConfig`, not on
+`RetrievalServiceApplication`. On the application class it installs the
+caching advisor into every `@WebMvcTest` slice as well, and a slice applies no
+`CacheAutoConfiguration`, so `RetrieveControllerTest` failed its context load
+with `No qualifying bean of type 'CacheManager'`. As a scanned
+`@Configuration` it is filtered out of web slices and still picked up by the
+full context, where `QueryVariationCachingTests` proves the Caffeine cache
+actually engages. Do not move it back.
