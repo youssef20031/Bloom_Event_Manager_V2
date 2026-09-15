@@ -246,7 +246,7 @@ git commit -m "build: multi-module aggregator on Boot 4.0.8 and Spring Cloud 202
   - `ExternalServiceException(String message, Throwable cause)`
   - `GlobalExceptionHandler` — a `@RestControllerAdvice`; services import it via component scan of `com.bloom.eventmanager.common`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `platform/bloom-common/src/test/java/com/bloom/eventmanager/common/error/GlobalExceptionHandlerTest.java`:
 
@@ -296,7 +296,7 @@ class GlobalExceptionHandlerTest {
 
 The third test is the important one: it pins the rule that an unexpected exception's message never reaches the client, because V1's error paths sometimes stringify raw driver errors that contain connection URIs.
 
-- [ ] **Step 2: Create the module POM**
+- [x] **Step 2: Create the module POM**
 
 `platform/bloom-common/pom.xml`:
 
@@ -333,12 +333,12 @@ The third test is the important one: it pins the rule that an unexpected excepti
 
 Add `<module>platform/bloom-common</module>` to the root `pom.xml` `<modules>` block.
 
-- [ ] **Step 3: Run the test to verify it fails**
+- [x] **Step 3: Run the test to verify it fails**
 
 Run: `./mvnw -q -pl platform/bloom-common test`
 Expected: COMPILATION FAILURE — `cannot find symbol: class GlobalExceptionHandler`
 
-- [ ] **Step 4: Write the implementation**
+- [x] **Step 4: Write the implementation**
 
 `ErrorCode.java`:
 
@@ -469,12 +469,12 @@ public class GlobalExceptionHandler {
 }
 ```
 
-- [ ] **Step 5: Run the test to verify it passes**
+- [x] **Step 5: Run the test to verify it passes**
 
 Run: `./mvnw -q -pl platform/bloom-common test`
 Expected: PASS, 3 tests
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add -A

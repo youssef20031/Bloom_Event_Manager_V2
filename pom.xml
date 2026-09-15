@@ -25,6 +25,7 @@
 
     <modules>
         <module>platform/bloom-bom</module>
+        <module>platform/bloom-common</module>
     </modules>
 
     <dependencyManagement>
