@@ -1,8 +1,11 @@
 package com.bloom.eventmanager.common.error;
 
 import java.net.URI;
+import java.util.stream.Collectors;
 
 import org.springframework.http.ProblemDetail;
+import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
@@ -14,6 +17,20 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(BloomException.class)
     public ProblemDetail handleBloom(BloomException ex) {
         return toProblem(ex.errorCode(), ex.getMessage());
+    }
+
+    @ExceptionHandler(MethodArgumentNotValidException.class)
+    public ProblemDetail handleValidation(MethodArgumentNotValidException ex) {
+        String detail = ex.getBindingResult().getFieldErrors().stream()
+                .map(error -> error.getField() + " " + error.getDefaultMessage())
+                .collect(Collectors.joining("; "));
+        return toProblem(ErrorCode.VALIDATION_FAILED, detail.isBlank() ? "Request validation failed" : detail);
+    }
+
+    /** Parser messages echo fragments of the body; keep them out of the response. */
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ProblemDetail handleUnreadable(HttpMessageNotReadableException ex) {
+        return toProblem(ErrorCode.VALIDATION_FAILED, "Malformed request body");
     }
 
     /**

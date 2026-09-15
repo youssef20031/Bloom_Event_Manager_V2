@@ -38,4 +38,37 @@ class GlobalExceptionHandlerTest {
         assertThat(problem.getDetail()).isEqualTo("Unexpected error");
         assertThat(problem.getDetail()).doesNotContain("hunter2");
     }
+
+    @Test
+    void mapsBeanValidationFailuresTo400WithFieldDetail() throws Exception {
+        java.lang.reflect.Method method = Probe.class.getDeclaredMethod("handle", String.class);
+        org.springframework.core.MethodParameter parameter = new org.springframework.core.MethodParameter(method, 0);
+        org.springframework.validation.BeanPropertyBindingResult binding =
+                new org.springframework.validation.BeanPropertyBindingResult(new Object(), "request");
+        binding.addError(new org.springframework.validation.FieldError("request", "text", "must not be blank"));
+
+        ProblemDetail problem = handler.handleValidation(
+                new org.springframework.web.bind.MethodArgumentNotValidException(parameter, binding));
+
+        assertThat(problem.getStatus()).isEqualTo(400);
+        assertThat(problem.getDetail()).isEqualTo("text must not be blank");
+        assertThat(problem.getProperties()).containsEntry("errorCode", "VALIDATION_FAILED");
+    }
+
+    @Test
+    void mapsUnreadableRequestBodiesTo400WithoutEchoingParserInternals() {
+        ProblemDetail problem = handler.handleUnreadable(
+                new org.springframework.http.converter.HttpMessageNotReadableException(
+                        "JSON parse error: Unexpected character at line 3", (org.springframework.http.HttpInputMessage) null));
+
+        assertThat(problem.getStatus()).isEqualTo(400);
+        assertThat(problem.getDetail()).isEqualTo("Malformed request body");
+        assertThat(problem.getProperties()).containsEntry("errorCode", "VALIDATION_FAILED");
+    }
+
+    @SuppressWarnings("unused")
+    private static final class Probe {
+        void handle(String text) {
+        }
+    }
 }
