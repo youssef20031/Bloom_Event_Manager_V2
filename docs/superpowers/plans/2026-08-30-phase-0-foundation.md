@@ -1726,12 +1726,12 @@ git commit -m "feat(gateway): routing to knowledge-service and legacy OAuth call
 
 Phase 0 starts these containers and verifies they are healthy. No application connects to them yet.
 
-- [ ] **Step 1: Write the failing check**
+- [x] **Step 1: Write the failing check**
 
 Run: `docker compose -f deploy/docker-compose.yml --profile infra config`
-Expected: FAIL — `no such file or directory`
+Expected: FAIL — `no such file or directory`, or `empty compose file` if a zero-byte placeholder is already there
 
-- [ ] **Step 2: Write `deploy/docker-compose.yml`**
+- [x] **Step 2: Write `deploy/docker-compose.yml`**
 
 The Neo4j image tag comment is carried over verbatim in substance from V1's compose file. It is load-bearing: the spec's Phase 1 validates against existing Neo4j data, and Neo4j upgrades its store format in place.
 
@@ -1771,7 +1771,10 @@ services:
       start_period: 30s
 
   mongodb:
-    image: mongo:8.0
+    # 8.2, not 8.0: MongoDB 8.0 refuses to start on Linux kernel 6.19+
+    # (SERVER-121912), and Docker Desktop's VM kernel is well past that.
+    # `mongo:latest` is still affected — 8.2 is the first tag that starts here.
+    image: mongo:8.2
     profiles: ["infra"]
     container_name: bloom-v2-mongo
     restart: unless-stopped
@@ -1825,7 +1828,12 @@ services:
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      # Empty host, not 0.0.0.0. In KRaft the controller listener's bind address
+      # is also validated as an advertised address, and Kafka rejects the
+      # nonroutable meta-address 0.0.0.0 there ("advertised.listeners cannot use
+      # the nonroutable meta-address"). An empty host binds all interfaces and
+      # advertises the hostname, which is what the image's own default does.
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
@@ -1868,7 +1876,7 @@ volumes:
   kafka-data:
 ```
 
-- [ ] **Step 3: Write `deploy/.env.example`**
+- [x] **Step 3: Write `deploy/.env.example`**
 
 Placeholder names only. Never commit real values — spec section 9.1.
 
@@ -1884,7 +1892,7 @@ Append to the repository `.gitignore`:
 deploy/.env
 ```
 
-- [ ] **Step 4: Validate and start the stack**
+- [x] **Step 4: Validate and start the stack**
 
 Run: `docker compose -f deploy/docker-compose.yml --profile infra config`
 Expected: prints the resolved configuration, exit code 0
@@ -1893,7 +1901,9 @@ Run: `docker compose -f deploy/docker-compose.yml --profile infra up -d`
 Then: `docker compose -f deploy/docker-compose.yml --profile infra ps`
 Expected: all five services eventually report `healthy`. Kafka and Neo4j take the longest; allow 60 seconds.
 
-- [ ] **Step 5: Commit**
+If a service shows `Restarting (1)` instead, it is crash-looping, not starting slowly — read `docker logs <container>` rather than waiting. Two such failures were found and fixed above: Kafka's `0.0.0.0` advertised-listener rejection and MongoDB 8.0's kernel 6.19+ refusal.
+
+- [x] **Step 5: Commit**
 
 ```bash
 git add -A
