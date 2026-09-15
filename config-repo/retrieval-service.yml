@@ -1,0 +1,6 @@
+server:
+  port: 8084
+
+bloom:
+  retrieval:
+    topK: ${RAG_TOP_K:15}
