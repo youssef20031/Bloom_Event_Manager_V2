@@ -1,0 +1,29 @@
+server:
+  port: 8761
+
+spring:
+  application:
+    name: discovery-server
+
+# The registry does not register with itself, and has no peer to replicate to
+# in a single-node local topology.
+eureka:
+  client:
+    register-with-eureka: false
+    fetch-registry: false
+  instance:
+    hostname: ${EUREKA_HOSTNAME:localhost}
+  server:
+    # Self-preservation makes a single-node dev registry hold on to instances
+    # long after they are gone, which is confusing while developing.
+    enable-self-preservation: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true

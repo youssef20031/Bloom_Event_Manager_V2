@@ -19,6 +19,7 @@ Every task's requirements implicitly include this section. Values are copied ver
 - **Java: `25`.**
 - **Group ID: `com.bloom.eventmanager`.** Base package `com.bloom.eventmanager.<module>`. The skeleton's `com.Bloom.Event.Manager` is deleted — capitalized package segments violate Java convention.
 - **Project version: `0.0.1-SNAPSHOT`** for every module.
+- **`TestRestTemplate` lives in `spring-boot-resttestclient`, not `spring-boot-test`.** Boot 4.0 split it out; the package is `org.springframework.boot.resttestclient`, the bean is gated behind `@AutoConfigureTestRestTemplate`, and its auto-configuration additionally needs `spring-boot-restclient` on the test classpath for `RestTemplateBuilder`. `spring-boot-starter-test` pulls in neither. Verified against 4.0.8 in Task 4.
 - **Gateway artifact is `spring-cloud-starter-gateway-server-webflux`.** The old `spring-cloud-starter-gateway` does not exist at gateway module version 5.0.3 — verified 404 on Maven Central.
 - **Gateway config prefix is `spring.cloud.gateway.server.webflux.*`.** Not the legacy `spring.cloud.gateway.*` — verified against the jar's `spring-configuration-metadata.json`.
 - **Boot 4 starter names:** `spring-boot-starter-webmvc` (not `-web`), `spring-boot-starter-data-mongodb`, `spring-boot-starter-data-redis`.
@@ -763,21 +764,23 @@ git commit -m "feat(events): Kafka event contracts with chunk batch size guard"
 - Consumes: `bloom-parent` as parent
 - Produces: a Eureka registry at `http://localhost:8761/eureka/`. Every later module registers against `${EUREKA_URL:http://localhost:8761/eureka/}`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```java
 package com.bloom.eventmanager.discovery;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.resttestclient.TestRestTemplate;
+import org.springframework.boot.resttestclient.autoconfigure.AutoConfigureTestRestTemplate;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.http.ResponseEntity;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@AutoConfigureTestRestTemplate
 class DiscoveryServerApplicationTests {
 
     @LocalServerPort
@@ -805,7 +808,7 @@ class DiscoveryServerApplicationTests {
 }
 ```
 
-- [ ] **Step 2: Create the module POM**
+- [x] **Step 2: Create the module POM**
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -838,6 +841,21 @@ class DiscoveryServerApplicationTests {
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- Boot 4.0 moved TestRestTemplate out of spring-boot-test into
+             spring-boot-resttestclient, and RestTemplateBuilder out of core
+             into spring-boot-restclient. Neither is pulled in by
+             spring-boot-starter-test any more, and the TestRestTemplate
+             auto-configuration needs both. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-resttestclient</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-restclient</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
@@ -853,12 +871,14 @@ class DiscoveryServerApplicationTests {
 
 Add `<module>infrastructure/discovery-server</module>` to the root `pom.xml`.
 
-- [ ] **Step 3: Run the test to verify it fails**
+- [x] **Step 3: Run the test to verify it fails**
 
 Run: `./mvnw -q -pl infrastructure/discovery-server test`
-Expected: COMPILATION FAILURE — `cannot find symbol: class DiscoveryServerApplication`
+Expected: `IllegalStateException: Unable to find a @SpringBootConfiguration by searching packages upwards from the test`
 
-- [ ] **Step 4: Write the implementation**
+Not a compilation failure — the test never names `DiscoveryServerApplication`, it discovers it by package scan, so the class being absent surfaces at context load.
+
+- [x] **Step 4: Write the implementation**
 
 `DiscoveryServerApplication.java`:
 
@@ -913,12 +933,12 @@ management:
         enabled: true
 ```
 
-- [ ] **Step 5: Run the test to verify it passes**
+- [x] **Step 5: Run the test to verify it passes**
 
 Run: `./mvnw -q -pl infrastructure/discovery-server test`
 Expected: PASS, 2 tests
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add -A
@@ -950,8 +970,9 @@ package com.bloom.eventmanager.config;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.resttestclient.TestRestTemplate;
+import org.springframework.boot.resttestclient.autoconfigure.AutoConfigureTestRestTemplate;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.http.ResponseEntity;
 
@@ -963,6 +984,7 @@ import static org.assertj.core.api.Assertions.assertThat;
                 "spring.profiles.active=native",
                 "spring.cloud.config.server.native.search-locations=classpath:/test-config-repo"
         })
+@AutoConfigureTestRestTemplate
 class ConfigServerApplicationTests {
 
     @LocalServerPort
@@ -1031,6 +1053,21 @@ bloom:
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- Boot 4.0 moved TestRestTemplate out of spring-boot-test into
+             spring-boot-resttestclient, and RestTemplateBuilder out of core
+             into spring-boot-restclient. Neither is pulled in by
+             spring-boot-starter-test any more, and the TestRestTemplate
+             auto-configuration needs both. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-resttestclient</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-restclient</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>
