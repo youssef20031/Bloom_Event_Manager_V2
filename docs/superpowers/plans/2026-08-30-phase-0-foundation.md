@@ -19,7 +19,11 @@ Every task's requirements implicitly include this section. Values are copied ver
 - **Java: `25`.**
 - **Group ID: `com.bloom.eventmanager`.** Base package `com.bloom.eventmanager.<module>`. The skeleton's `com.Bloom.Event.Manager` is deleted — capitalized package segments violate Java convention.
 - **Project version: `0.0.1-SNAPSHOT`** for every module.
-- **`TestRestTemplate` lives in `spring-boot-resttestclient`, not `spring-boot-test`.** Boot 4.0 split it out; the package is `org.springframework.boot.resttestclient`, the bean is gated behind `@AutoConfigureTestRestTemplate`, and its auto-configuration additionally needs `spring-boot-restclient` on the test classpath for `RestTemplateBuilder`. `spring-boot-starter-test` pulls in neither. Verified against 4.0.8 in Task 4.
+- **Boot 4.0 split the test-support classes into per-technology modules, and `spring-boot-starter-test` brings none of them.** Declare the one you need test-scoped (all are managed by the Boot BOM, so no explicit version). Verified against 4.0.8:
+  - `TestRestTemplate` → `spring-boot-resttestclient`, package `org.springframework.boot.resttestclient`. The bean is gated behind `@AutoConfigureTestRestTemplate`, and its auto-configuration also needs `spring-boot-restclient` for `RestTemplateBuilder` — declare both (Task 4).
+  - `@WebMvcTest` → `spring-boot-webmvc-test`, package `org.springframework.boot.webmvc.test.autoconfigure` (Task 6).
+  - `MockMvc` and its matchers stay in `spring-test` at `org.springframework.test.web.servlet` — unchanged.
+  - Expect the same shape for any other `org.springframework.boot.test.autoconfigure.*` import the plan still names.
 - **Gateway artifact is `spring-cloud-starter-gateway-server-webflux`.** The old `spring-cloud-starter-gateway` does not exist at gateway module version 5.0.3 — verified 404 on Maven Central.
 - **Gateway config prefix is `spring.cloud.gateway.server.webflux.*`.** Not the legacy `spring.cloud.gateway.*` — verified against the jar's `spring-configuration-metadata.json`.
 - **Boot 4 starter names:** `spring-boot-starter-webmvc` (not `-web`), `spring-boot-starter-data-mongodb`, `spring-boot-starter-data-redis`.
@@ -1208,14 +1212,14 @@ git commit -m "feat(config): Config Server with native config-repo backend"
 
 `/api/v1/ping` is not in the spec's `knowledge-service` contract. It is a permanent routing smoke endpoint, deliberately kept so later phases can verify gateway wiring without invoking real business logic. Phase 1 adds the Neo4j endpoints alongside it.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```java
 package com.bloom.eventmanager.knowledge.api;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.test.web.servlet.MockMvc;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -1238,7 +1242,7 @@ class PingControllerTest {
 }
 ```
 
-- [ ] **Step 2: Create the module POM**
+- [x] **Step 2: Create the module POM**
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -1295,6 +1299,13 @@ class PingControllerTest {
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- Boot 4.0 moved @WebMvcTest out of spring-boot-test-autoconfigure
+             into its own module; spring-boot-starter-test no longer brings it. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-webmvc-test</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
@@ -1310,12 +1321,12 @@ class PingControllerTest {
 
 Add `<module>services/knowledge-service</module>` to the root `pom.xml`.
 
-- [ ] **Step 3: Run the test to verify it fails**
+- [x] **Step 3: Run the test to verify it fails**
 
 Run: `./mvnw -q -pl services/knowledge-service test`
 Expected: COMPILATION FAILURE — `cannot find symbol: class PingController`
 
-- [ ] **Step 4: Write the implementation**
+- [x] **Step 4: Write the implementation**
 
 `KnowledgeServiceApplication.java`:
 
@@ -1380,12 +1391,12 @@ server:
   port: 8082
 ```
 
-- [ ] **Step 5: Run the test to verify it passes**
+- [x] **Step 5: Run the test to verify it passes**
 
 Run: `./mvnw -q -pl services/knowledge-service test`
 Expected: PASS, 1 test
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add -A

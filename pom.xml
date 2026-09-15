@@ -29,6 +29,7 @@
         <module>platform/bloom-events</module>
         <module>infrastructure/discovery-server</module>
         <module>infrastructure/config-server</module>
+        <module>services/knowledge-service</module>
     </modules>
 
     <dependencyManagement>

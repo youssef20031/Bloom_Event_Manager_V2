@@ -1,0 +1,10 @@
+spring:
+  application:
+    name: knowledge-service
+  config:
+    # 'optional:' keeps the service startable when the Config Server is down,
+    # which is what lets @WebMvcTest and @SpringBootTest run without it.
+    import: optional:configserver:${CONFIG_SERVER_URL:http://localhost:8888}
+
+server:
+  port: 8082
