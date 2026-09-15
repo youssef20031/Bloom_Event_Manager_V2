@@ -50,6 +50,15 @@
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
+                <configuration>
+                    <!-- spring-boot:run defaults its working directory to this
+                         module, not the shell's cwd, so the native backend's
+                         default search-location of file:./config-repo would
+                         resolve to infrastructure/config-server/config-repo and
+                         silently serve zero property sources. Pin it to the
+                         multi-module root, where config-repo/ actually lives. -->
+                    <workingDirectory>${maven.multiModuleProjectDirectory}</workingDirectory>
+                </configuration>
             </plugin>
         </plugins>
     </build>

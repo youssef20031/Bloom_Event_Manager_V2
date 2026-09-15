@@ -1922,12 +1922,12 @@ git commit -m "chore(deploy): docker compose infra profile for neo4j, mongo, red
 - Consumes: every module from Tasks 1 through 8
 - Produces: the Phase 0 exit criterion, demonstrated and documented
 
-- [ ] **Step 1: Full reactor build**
+- [x] **Step 1: Full reactor build**
 
 Run: `./mvnw clean install`
 Expected: BUILD SUCCESS across all eight reactor projects — `bloom-parent`, `bloom-bom`, `bloom-common`, `bloom-events`, `discovery-server`, `config-server`, `knowledge-service`, `api-gateway` — with all tests green: 3 in `bloom-common`, 3 in `bloom-events`, 2 in `discovery-server`, 2 in `config-server`, 1 in `knowledge-service`, 4 in `api-gateway` — 15 in total.
 
-- [ ] **Step 2: Start the platform in dependency order**
+- [x] **Step 2: Start the platform in dependency order**
 
 Each command in its own terminal, from the repository root. Wait for each to report started before beginning the next.
 
@@ -1938,22 +1938,27 @@ Each command in its own terminal, from the repository root. Wait for each to rep
 ./mvnw -pl infrastructure/api-gateway spring-boot:run
 ```
 
-The Config Server must start from the repository root so its default
-`search-locations` of `file:./config-repo` resolves.
+The Config Server needs `config-repo/` at the repository root, but starting
+`mvnw` from there is not sufficient: `spring-boot:run` defaults its working
+directory to the module being run, so `file:./config-repo` resolves inside
+`infrastructure/config-server/` and the server silently serves an empty
+`propertySources` list rather than failing. The config-server module therefore
+pins `<workingDirectory>${maven.multiModuleProjectDirectory}</workingDirectory>`
+on `spring-boot-maven-plugin`. Found in Task 9 Step 3.
 
-- [ ] **Step 3: Verify Config Server serves the service config**
+- [x] **Step 3: Verify Config Server serves the service config**
 
 Run: `curl -s http://localhost:8888/knowledge-service/default`
 Expected: JSON containing `"name":"knowledge-service"` and the property `bloom.config-server.reachable` with value `true`.
 
-- [ ] **Step 4: Verify registration in Eureka**
+- [x] **Step 4: Verify registration in Eureka**
 
 Run: `curl -s -H "Accept: application/json" http://localhost:8761/eureka/apps`
 Expected: JSON containing an application named `KNOWLEDGE-SERVICE` with one instance whose `status` is `UP`.
 
 If the registry is empty, `knowledge-service` did not reach Eureka. Check that `config-repo/application.yml` was served (Step 3) — the Eureka URL comes from there, not from the service's own `application.yml`.
 
-- [ ] **Step 5: Verify the phase exit criterion — gateway routes through Eureka**
+- [x] **Step 5: Verify the phase exit criterion — gateway routes through Eureka**
 
 Run: `curl -s -i http://localhost:8080/api/v1/rag/ping`
 
@@ -1965,14 +1970,14 @@ Expected: HTTP 200 with body:
 
 This single request proves the whole chain: the gateway matched the route, resolved `lb://knowledge-service` through Eureka, rewrote `/api/v1/rag/ping` to `/api/v1/ping`, and got a response from a separately running process.
 
-- [ ] **Step 6: Verify the legacy OAuth callback still redirects**
+- [x] **Step 6: Verify the legacy OAuth callback still redirects**
 
 Run: `curl -s -i "http://localhost:8080/api/rag/auth/google/callback?code=test123&scope=drive"`
 
 Expected: `HTTP/1.1 307 Temporary Redirect` with header
 `Location: /api/v1/rag/sync/auth/callback?code=test123&scope=drive`
 
-- [ ] **Step 7: Write `README.md`**
+- [x] **Step 7: Write `README.md`**
 
 ```markdown
 # Bloom Event Manager V2
@@ -2041,7 +2046,7 @@ never committed. Copy `deploy/.env.example` to `deploy/.env` for local
 infrastructure credentials.
 ```
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add -A
@@ -2055,13 +2060,15 @@ git push
 
 All must hold before Phase 1 begins:
 
-- [ ] `./mvnw clean install` succeeds on Boot 4.0.8 with all tests green
-- [ ] `docker compose -f deploy/docker-compose.yml --profile infra ps` shows five healthy services
-- [ ] `curl http://localhost:8888/knowledge-service/default` returns config from `config-repo/`
-- [ ] `knowledge-service` appears `UP` in the Eureka registry
-- [ ] `curl http://localhost:8080/api/v1/rag/ping` returns `{"service":"knowledge-service","status":"ok"}`
-- [ ] `curl -i "http://localhost:8080/api/rag/auth/google/callback?code=x"` returns 307 preserving `?code=x`
-- [ ] No business logic exists: no Neo4j driver, Gemini client, Drive client, or Kafka producer/consumer code
+- [x] `./mvnw clean install` succeeds on Boot 4.0.8 with all tests green
+- [x] `docker compose -f deploy/docker-compose.yml --profile infra ps` shows five healthy services
+- [x] `curl http://localhost:8888/knowledge-service/default` returns config from `config-repo/`
+- [x] `knowledge-service` appears `UP` in the Eureka registry
+- [x] `curl http://localhost:8080/api/v1/rag/ping` returns `{"service":"knowledge-service","status":"ok"}`
+- [x] `curl -i "http://localhost:8080/api/rag/auth/google/callback?code=x"` returns 307 preserving `?code=x`
+- [x] No business logic exists: no Neo4j driver, Gemini client, Drive client, or Kafka producer/consumer code
+      (`bloom-bom` pins `google-api-services-drive` and `spring-ai-bom` versions in `dependencyManagement`,
+      but no module depends on them — verified with `dependency:list` across all six modules)
 
 ## What Phase 0 Does Not Do
 
