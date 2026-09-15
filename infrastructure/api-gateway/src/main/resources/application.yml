@@ -28,6 +28,14 @@ spring:
                 - Path=/api/v1/rag/retrieve
               filters:
                 - RewritePath=/api/v1/rag/retrieve,/api/v1/retrieve
+            - id: ingest
+              uri: lb://ingestion-service
+              predicates:
+                - Path=/api/v1/rag/ingest,/api/v1/rag/ingest/**
+              filters:
+                # $\{rest} is escaped on purpose: a bare ${rest} is consumed as a
+                # Spring property placeholder before the gateway ever sees it.
+                - RewritePath=/api/v1/rag/ingest(?<rest>.*),/api/v1/ingest$\{rest}
 
 management:
   endpoints:

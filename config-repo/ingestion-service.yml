@@ -1,0 +1,15 @@
+server:
+  port: 8083
+
+bloom:
+  ingestion:
+    pdf-directory: ${PDF_DIRECTORY:./ISM_PDF}
+    chunk-size: ${CHUNK_SIZE:1000}
+    chunk-overlap: ${CHUNK_OVERLAP:200}
+    ocr-min-chars: 100
+    ocr-dpi: 300
+    ocr-language: eng
+    # Empty: use the eng.traineddata bundled in the jar. Set to a directory
+    # containing *.traineddata to use a system Tesseract install instead.
+    ocr-data-path: ${TESSDATA_PATH:}
+    embedding-batch-size: 20
