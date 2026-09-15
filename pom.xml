@@ -28,6 +28,7 @@
         <module>platform/bloom-common</module>
         <module>platform/bloom-events</module>
         <module>infrastructure/discovery-server</module>
+        <module>infrastructure/config-server</module>
     </modules>
 
     <dependencyManagement>

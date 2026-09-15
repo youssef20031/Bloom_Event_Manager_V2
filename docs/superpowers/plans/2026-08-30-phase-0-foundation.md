@@ -963,7 +963,7 @@ git commit -m "feat(discovery): Eureka registry on 8761"
 - Consumes: `bloom-parent` as parent
 - Produces: a Config Server at `http://localhost:8888` serving `{application}/{profile}`. Clients import it with `spring.config.import: optional:configserver:${CONFIG_SERVER_URL:http://localhost:8888}`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```java
 package com.bloom.eventmanager.config;
@@ -1022,7 +1022,7 @@ bloom:
     reachable: true
 ```
 
-- [ ] **Step 2: Create the module POM**
+- [x] **Step 2: Create the module POM**
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -1085,12 +1085,14 @@ bloom:
 
 Add `<module>infrastructure/config-server</module>` to the root `pom.xml`.
 
-- [ ] **Step 3: Run the test to verify it fails**
+- [x] **Step 3: Run the test to verify it fails**
 
 Run: `./mvnw -q -pl infrastructure/config-server test`
-Expected: COMPILATION FAILURE — `cannot find symbol: class ConfigServerApplication`
+Expected: `IllegalStateException: Unable to find a @SpringBootConfiguration by searching packages upwards from the test`
 
-- [ ] **Step 4: Write the implementation**
+Not a compilation failure — as in Task 4, the test discovers the application class by package scan rather than naming it, so its absence surfaces at context load.
+
+- [x] **Step 4: Write the implementation**
 
 `ConfigServerApplication.java`:
 
@@ -1176,12 +1178,12 @@ bloom:
     reachable: true
 ```
 
-- [ ] **Step 5: Run the test to verify it passes**
+- [x] **Step 5: Run the test to verify it passes**
 
 Run: `./mvnw -q -pl infrastructure/config-server test`
 Expected: PASS, 2 tests
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add -A

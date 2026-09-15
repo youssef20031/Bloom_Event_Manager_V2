@@ -1,0 +1,3 @@
+bloom:
+  config-server:
+    reachable: true
