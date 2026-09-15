@@ -25,6 +25,9 @@ import static org.assertj.core.api.Assertions.assertThat;
         "spring.config.import=",
         "eureka.client.enabled=false",
         "spring.cloud.discovery.enabled=false",
+        // No Kafka container here, so keep the listener containers parked; otherwise
+        // they retry localhost:9092 for the whole run and bury the Neo4j output.
+        "spring.kafka.listener.auto-startup=false",
         // Tiny vectors keep the fixtures readable; the index is created with this size.
         "bloom.knowledge.embedding-dimensions=4"
 })
@@ -138,5 +141,15 @@ class Neo4jChunkRepositoryIntegrationTests {
 
         repository.deleteDocument("brief.pdf");
         assertThat(repository.driveFileMetadata("drive-123")).isEmpty();
+    }
+
+    @Test
+    void countsChunksPerDocument() {
+        repository.storeBatch(List.of(
+                new ChunkRecord("c-1", "x", "guide.pdf", 1, new float[] { 1f, 0f, 0f, 0f }),
+                new ChunkRecord("c-2", "y", "guide.pdf", 2, new float[] { 0f, 1f, 0f, 0f })));
+
+        assertThat(repository.countChunks("guide.pdf")).isEqualTo(2);
+        assertThat(repository.countChunks("missing.pdf")).isZero();
     }
 }

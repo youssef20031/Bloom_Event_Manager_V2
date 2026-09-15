@@ -22,6 +22,9 @@ public interface ChunkRepository {
 
     Optional<DriveFileMetadata> driveFileMetadata(String driveFileId);
 
+    /** Number of Chunk nodes hanging off the Document with this source; 0 if none. */
+    int countChunks(String source);
+
     /** @return number of chunks removed; 0 when the document did not exist */
     int deleteDocument(String source);
 
