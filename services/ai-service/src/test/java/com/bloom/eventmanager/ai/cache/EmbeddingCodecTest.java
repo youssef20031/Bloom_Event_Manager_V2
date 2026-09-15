@@ -33,9 +33,13 @@ class EmbeddingCodecTest {
     }
 
     @Test
-    void hashIsStableForUnicode() {
+    void hashesArabicTextAsUtf8LikeV1() {
+        // Pinned against an external oracle (sha256sum over the UTF-8 bytes), not
+        // against this codec. Comparing the function to itself would still pass if
+        // it hashed the platform default charset, which would miss every Arabic
+        // entry in V1's warm cache.
         assertThat(EmbeddingCodec.hashText("فعاليات بناء الفريق"))
-                .isEqualTo(EmbeddingCodec.hashText("فعاليات بناء الفريق"))
+                .isEqualTo("71dc8ad465602fc5beb95eb7c62256b2")
                 .hasSize(32);
     }
 }

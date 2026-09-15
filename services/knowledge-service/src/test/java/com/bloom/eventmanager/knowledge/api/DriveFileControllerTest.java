@@ -94,6 +94,26 @@ class DriveFileControllerTest {
     }
 
     @Test
+    void deleteWithNoSourceParameterAtAllIsA400NotA500() throws Exception {
+        // Distinct from the blank-source case: a missing required @RequestParam is
+        // thrown during argument resolution, before the controller body runs, so
+        // the in-method guard never sees it.
+        mockMvc.perform(delete("/api/v1/documents"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errorCode").value("VALIDATION_FAILED"));
+    }
+
+    @Test
+    void chunksBySourcesDefaultsLimitToFiftyWhenAbsent() throws Exception {
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .post("/api/v1/sources/chunks").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"sources\": [\"a.pdf\"]}"))
+                .andExpect(status().isOk());
+
+        verify(repository).randomChunksFromSources(java.util.List.of("a.pdf"), 50);
+    }
+
+    @Test
     void listsSources() throws Exception {
         when(repository.allSources()).thenReturn(java.util.List.of("a.pdf", "b.pdf"));
 

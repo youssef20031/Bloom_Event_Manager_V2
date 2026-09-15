@@ -12,6 +12,7 @@ import org.springframework.stereotype.Service;
 
 import com.bloom.eventmanager.ai.domain.EmbeddingPort;
 import com.bloom.eventmanager.ai.gemini.GeminiEmbeddingService;
+import com.bloom.eventmanager.common.error.ExternalServiceException;
 
 /**
  * The EmbeddingPort everyone gets. Serves hits from Redis and forwards only
@@ -63,6 +64,13 @@ public class CachingEmbeddingService implements EmbeddingPort {
         if (!missIndicesByText.isEmpty()) {
             List<String> missTexts = new ArrayList<>(missIndicesByText.keySet());
             List<float[]> fresh = upstream.embedBatch(missTexts);
+            // Texts and embeddings are paired by position below. Cache writes have no
+            // TTL and use V1's key layout, so a misaligned pair would permanently
+            // poison V1's cache too — refuse the whole batch before writing anything.
+            if (fresh.size() != missTexts.size()) {
+                throw new ExternalServiceException(
+                        "Gemini returned " + fresh.size() + " embeddings for " + missTexts.size() + " texts", null);
+            }
             for (int j = 0; j < missTexts.size(); j++) {
                 String text = missTexts.get(j);
                 float[] embedding = fresh.get(j);

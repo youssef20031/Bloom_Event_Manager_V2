@@ -23,9 +23,15 @@ public class DocumentController {
     /**
      * Query parameter rather than path variable: sources are file names, and
      * Drive files in subfolders carry slashes ("Clients/Acme/brief.pdf").
+     *
+     * <p>Declared {@code required = false} so an absent parameter arrives here as
+     * null and is rejected as a 400 by the guard below. Left required, Spring
+     * throws during argument resolution — before this method runs — and that
+     * exception reaches the shared advice's catch-all, reporting a forgotten
+     * parameter as a 500.
      */
     @DeleteMapping
-    public DeleteDocumentResponse delete(@RequestParam("source") String source) {
+    public DeleteDocumentResponse delete(@RequestParam(name = "source", required = false) String source) {
         if (source == null || source.isBlank()) {
             throw new BloomException(ErrorCode.VALIDATION_FAILED, "source is required");
         }

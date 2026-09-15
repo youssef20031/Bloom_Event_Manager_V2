@@ -137,3 +137,16 @@ V1's database also contains a second vector index,
 residue from V1's abandoned `Neo4jChunkRepository.ts`, which is deliberately
 not ported. Phase 1 addresses its index by configured name and is unaffected;
 Phase 3 writes to this database and should account for it.
+
+### Known limitation: Gemini retries
+
+`GeminiClientConfig` passes Spring AI's `RetryUtils.DEFAULT_RETRY_TEMPLATE` to
+the chat model, but that template only matches `TransientAiException` and
+`ResourceAccessException`, and `spring-ai-google-genai` 2.0.1 throws neither —
+the SDK raises `com.google.genai.errors.ApiException`. Nothing on the Gemini
+path is therefore actually retried, so a transient 5xx or a socket blip fails
+the request immediately, and only 429 and 404 walk the model-fallback chain.
+This is not a regression from V1, which behaved the same way, and one side
+effect is welcome: a quota error reaches the next model at once instead of
+after ten backoff attempts. It does mean **Phase 5 must not assume a working
+retry layer already exists** when it adds circuit breakers.

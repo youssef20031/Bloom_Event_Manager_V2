@@ -6,8 +6,10 @@ import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
 import com.bloom.eventmanager.ai.gemini.GeminiEmbeddingService;
+import com.bloom.eventmanager.common.error.ExternalServiceException;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
@@ -72,6 +74,20 @@ class CachingEmbeddingServiceTest {
         service.embedBatch(List.of("a", "b"));
 
         verify(upstream, never()).embedBatch(any());
+    }
+
+    @Test
+    void refusesTheWholeBatchIfUpstreamReturnsTheWrongNumberOfEmbeddings() {
+        when(cache.get(anyString())).thenReturn(Optional.empty());
+        // Two texts requested, one embedding back: pairing by position would map
+        // "b"'s vector onto "a" and permanently poison V1's shared cache.
+        when(upstream.embedBatch(List.of("a", "b"))).thenReturn(List.of(new float[] { 1f }));
+
+        assertThatThrownBy(() -> service.embedBatch(List.of("a", "b")))
+                .isInstanceOf(ExternalServiceException.class)
+                .hasMessageContaining("1 embeddings for 2 texts");
+
+        verify(cache, never()).put(anyString(), any());
     }
 
     @Test

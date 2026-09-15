@@ -41,12 +41,20 @@ public class GeminiEmbeddingService implements EmbeddingPort {
         List<float[]> out = new ArrayList<>(texts.size());
         for (int from = 0; from < texts.size(); from += batchSize) {
             List<String> slice = texts.subList(from, Math.min(from + batchSize, texts.size()));
+            List<float[]> embedded;
             try {
-                out.addAll(model.embed(slice));
+                embedded = model.embed(slice);
             }
             catch (RuntimeException ex) {
                 throw new ExternalServiceException("Gemini batch embedding failed", ex);
             }
+            // Caught per slice rather than after concatenation: one short slice would
+            // otherwise shift the positional alignment of every text after it.
+            if (embedded.size() != slice.size()) {
+                throw new ExternalServiceException("Gemini returned " + embedded.size()
+                        + " embeddings for a slice of " + slice.size() + " texts", null);
+            }
+            out.addAll(embedded);
         }
         return out;
     }

@@ -185,7 +185,10 @@ public class Neo4jChunkRepository implements ChunkRepository {
             Record record = records.get(0);
             return Optional.of(new DriveFileMetadata(
                     record.get("source").asString(),
-                    record.get("modifiedTime").asString()));
+                    // Defaulted like allDriveFileMetadata(): a V1 Document can carry a
+                    // driveFileId with no driveModifiedTime, and asString() would throw
+                    // Uncoercible on the null, turning this endpoint into a 500.
+                    record.get("modifiedTime").asString("")));
         }
     }
 
