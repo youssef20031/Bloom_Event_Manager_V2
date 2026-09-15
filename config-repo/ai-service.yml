@@ -1,0 +1,26 @@
+server:
+  port: 8081
+
+spring:
+  data:
+    redis:
+      url: ${REDIS_URL:redis://localhost:6379}
+      # Fail fast. Without these a Redis outage turns every cache lookup into a
+      # long stall before it falls through — V1 set the same guard on ioredis.
+      timeout: 2s
+      connect-timeout: 2s
+
+bloom:
+  ai:
+    api-key: ${GEMINI_API_KEY}
+    model: ${GEMINI_MODEL:gemini-3-flash-preview}
+    fallback-models: ${GEMINI_FALLBACK_MODELS:gemini-2.5-flash,gemini-2.0-flash-001}
+    embedding-model: ${GEMINI_EMBEDDING_MODEL:gemini-embedding-001}
+    embedding-dimensions: 3072
+    embedding-batch-size: 20
+    cache-key-prefix: ${CACHE_KEY_PREFIX:bloom:}
+
+# Redis is a performance layer. Boot's readiness group contains only
+# readinessState by default, so a Redis outage is visible on /actuator/health
+# but never takes this service out of rotation — the same judgment V1 encoded
+# in a comment in healthRoutes.ts.
