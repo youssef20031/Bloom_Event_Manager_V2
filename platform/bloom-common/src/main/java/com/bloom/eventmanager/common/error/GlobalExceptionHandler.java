@@ -16,7 +16,9 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(BloomException.class)
     public ProblemDetail handleBloom(BloomException ex) {
-        return toProblem(ex.errorCode(), ex.getMessage());
+        ProblemDetail problem = toProblem(ex.errorCode(), ex.getMessage());
+        ex.properties().forEach(problem::setProperty);
+        return problem;
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)

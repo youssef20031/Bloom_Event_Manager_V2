@@ -7,6 +7,8 @@ public enum ErrorCode {
     NOT_FOUND(HttpStatus.NOT_FOUND, "Resource Not Found"),
     VALIDATION_FAILED(HttpStatus.BAD_REQUEST, "Validation Failed"),
     EXTERNAL_SERVICE_ERROR(HttpStatus.BAD_GATEWAY, "External Service Error"),
+    CONFLICT(HttpStatus.CONFLICT, "Conflict"),
+    DRIVE_NOT_AUTHENTICATED(HttpStatus.UNAUTHORIZED, "Google Drive Not Authenticated"),
     INTERNAL_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, "Internal Error");
 
     private final HttpStatus status;
