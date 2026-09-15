@@ -26,6 +26,7 @@
     <modules>
         <module>platform/bloom-bom</module>
         <module>platform/bloom-common</module>
+        <module>platform/bloom-events</module>
     </modules>
 
     <dependencyManagement>

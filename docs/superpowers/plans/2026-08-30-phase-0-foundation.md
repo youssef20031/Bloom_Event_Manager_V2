@@ -508,7 +508,7 @@ git commit -m "feat(common): RFC 9457 problem detail error model"
 
 These are pure data carriers. This module must not depend on any Kafka client — producers and consumers arrive in Phase 3.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `platform/bloom-events/src/test/java/com/bloom/eventmanager/events/ChunkBatchReadyTest.java`:
 
@@ -570,7 +570,7 @@ class ChunkBatchReadyTest {
 
 The size-guard test encodes spec section 6: a 3072-dimension `float[]` is roughly 12 KB, so more than 20 chunks in one message would exceed Kafka's 1 MB default. Enforcing it in the constructor makes the constraint impossible to violate accidentally in Phase 3.
 
-- [ ] **Step 2: Create the module POM**
+- [x] **Step 2: Create the module POM**
 
 `platform/bloom-events/pom.xml`:
 
@@ -607,12 +607,12 @@ The size-guard test encodes spec section 6: a 3072-dimension `float[]` is roughl
 
 Add `<module>platform/bloom-events</module>` to the root `pom.xml`.
 
-- [ ] **Step 3: Run the test to verify it fails**
+- [x] **Step 3: Run the test to verify it fails**
 
 Run: `./mvnw -q -pl platform/bloom-events test`
 Expected: COMPILATION FAILURE — `cannot find symbol: class ChunkBatchReady`
 
-- [ ] **Step 4: Write the implementation**
+- [x] **Step 4: Write the implementation**
 
 `BloomTopics.java`:
 
@@ -734,14 +734,14 @@ public record DocumentDeleted(
 }
 ```
 
-- [ ] **Step 5: Run the test to verify it passes**
+- [x] **Step 5: Run the test to verify it passes**
 
 Run: `./mvnw -q -pl platform/bloom-events test`
 Expected: PASS, 3 tests
 
 If the round-trip test fails on the `last` property, Jackson has serialised the `boolean last` component as `"last"` — which is what the test asserts. Do not rename the component to `isLast`; that would produce a `"isLast"` JSON key and an awkward accessor.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add -A
