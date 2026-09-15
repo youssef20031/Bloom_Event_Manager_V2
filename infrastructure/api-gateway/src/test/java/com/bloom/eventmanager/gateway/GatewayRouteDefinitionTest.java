@@ -36,4 +36,14 @@ class GatewayRouteDefinitionTest {
         assertThat(route).isNotNull();
         assertThat(route.getUri()).hasToString("lb://knowledge-service");
     }
+
+    @Test
+    void routesRetrieveToTheRetrievalService() {
+        Route route = routeLocator.getRoutes()
+                .filter(r -> "retrieve".equals(r.getId()))
+                .blockFirst();
+
+        assertThat(route).isNotNull();
+        assertThat(route.getUri()).hasToString("lb://retrieval-service");
+    }
 }

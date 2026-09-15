@@ -31,6 +31,7 @@
         <module>infrastructure/config-server</module>
         <module>services/knowledge-service</module>
         <module>services/ai-service</module>
+        <module>services/retrieval-service</module>
         <module>infrastructure/api-gateway</module>
     </modules>
 

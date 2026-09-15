@@ -1,0 +1,14 @@
+spring:
+  application:
+    name: retrieval-service
+  config:
+    import: optional:configserver:${CONFIG_SERVER_URL:http://localhost:8888}
+  cache:
+    cache-names: queryVariations
+    caffeine:
+      # V1: CACHE_TTL_QUERY_VARIATIONS_MS = 1 hour. In-process, because this
+      # service owns no Redis; the expensive part (embeddings) is cached in ai-service.
+      spec: maximumSize=1000,expireAfterWrite=1h
+
+server:
+  port: 8084

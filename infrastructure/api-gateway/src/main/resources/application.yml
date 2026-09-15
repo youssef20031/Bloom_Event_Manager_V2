@@ -22,6 +22,12 @@ spring:
                 - Path=/api/v1/rag/ping
               filters:
                 - RewritePath=/api/v1/rag/ping,/api/v1/ping
+            - id: retrieve
+              uri: lb://retrieval-service
+              predicates:
+                - Path=/api/v1/rag/retrieve
+              filters:
+                - RewritePath=/api/v1/rag/retrieve,/api/v1/retrieve
 
 management:
   endpoints:
