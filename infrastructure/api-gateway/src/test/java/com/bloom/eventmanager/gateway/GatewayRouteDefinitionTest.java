@@ -70,4 +70,15 @@ class GatewayRouteDefinitionTest {
         assertThat(routeLocator.getRoutes().filter(r -> "sync".equals(r.getId())).blockFirst().getUri())
                 .hasToString("lb://storage-service");
     }
+
+    @Test
+    void routesChatAndProposalSurfaces() {
+        List<String> ids = routeLocator.getRoutes().map(Route::getId).collectList().block();
+
+        assertThat(ids).contains("chat", "proposals", "generate-proposal", "event-intake");
+        assertThat(routeLocator.getRoutes().filter(r -> "chat".equals(r.getId())).blockFirst().getUri())
+                .hasToString("lb://chat-service");
+        assertThat(routeLocator.getRoutes().filter(r -> "event-intake".equals(r.getId())).blockFirst().getUri())
+                .hasToString("lb://proposal-service");
+    }
 }
