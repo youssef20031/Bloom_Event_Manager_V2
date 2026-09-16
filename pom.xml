@@ -27,6 +27,7 @@
         <module>platform/bloom-bom</module>
         <module>platform/bloom-common</module>
         <module>platform/bloom-events</module>
+        <module>platform/bloom-pdf</module>
         <module>infrastructure/discovery-server</module>
         <module>infrastructure/config-server</module>
         <module>services/knowledge-service</module>
