@@ -54,4 +54,26 @@ class BriefPdfRendererTest {
             assertThat(new PDFTextStripper().getText(doc)).contains("None selected").contains("—");
         }
     }
+
+    @Test
+    void nonWinAnsiTextInAFreeTextFieldDegradesToPlaceholdersRatherThanThrowing() throws IOException {
+        // This renderer draws everything with Standard-14 Helvetica and has no
+        // Arabic font by design (only the slide deck gets ICU4J shaping, per
+        // the plan). Arabic reaching a free-text field is plausible input for
+        // a Cairo-based business — V1 (PDFKit) never throws on an unsupported
+        // glyph, it just can't draw it, so the parity target is "renders,
+        // with placeholders" rather than "crashes the whole submission".
+        EventIntakeData data = new EventIntakeData("Acme", null, null, null, null, List.of(), null, null, null,
+                List.of(), null, null, null, null, null, null, List.of(), null, null, null, null, null, List.of(), null,
+                List.of(), null, null, List.of(), List.of(), List.of(), null, null, List.of(), null, List.of(), null, null,
+                List.of(), null, null, "مرحبا");
+
+        byte[] pdf = new BriefPdfRenderer().render(data);
+
+        try (PDDocument doc = Loader.loadPDF(pdf)) {
+            assertThat(doc.getNumberOfPages()).isGreaterThanOrEqualTo(1);
+            // Five Arabic letters, none encodable by Helvetica -> five placeholders.
+            assertThat(new PDFTextStripper().getText(doc)).contains("?????");
+        }
+    }
 }

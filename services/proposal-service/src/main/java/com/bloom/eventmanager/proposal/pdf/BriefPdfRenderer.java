@@ -19,6 +19,7 @@ import org.apache.pdfbox.pdmodel.font.PDFont;
 import org.springframework.stereotype.Component;
 
 import com.bloom.eventmanager.pdf.PdfFonts;
+import com.bloom.eventmanager.pdf.SafeText;
 import com.bloom.eventmanager.proposal.domain.EventIntakeData;
 
 /** V1's SubmitProposalUseCase.generatePdfBuffer: the "Event Intake & Customer Brief" A4 document. */
@@ -276,7 +277,12 @@ public class BriefPdfRenderer {
             s.beginText();
             s.setFont(font, size);
             s.newLineAtOffset(x, baseline);
-            s.showText(text.replace("\r", ""));
+            // This renderer draws everything with Standard-14 fonts and has no
+            // Arabic (or other non-Latin) fallback by design — an intake field
+            // containing Arabic or any other WinAnsi-incompatible character
+            // must degrade to placeholders, the same way V1 (PDFKit) degrades,
+            // rather than crash the whole submission.
+            s.showText(SafeText.forFont(font, text));
             s.endText();
         }
 

@@ -13,6 +13,7 @@ import org.apache.pdfbox.pdmodel.graphics.state.PDExtendedGraphicsState;
 
 import com.bloom.eventmanager.pdf.ArabicText;
 import com.bloom.eventmanager.pdf.PdfFonts;
+import com.bloom.eventmanager.pdf.SafeText;
 
 /** One 1280x720 slide. Arabic strings are shaped and right-aligned automatically. */
 final class SlideCanvas implements AutoCloseable {
@@ -94,7 +95,12 @@ final class SlideCanvas implements AutoCloseable {
         float leading = size * 1.3f;
         float y = yFromTop;
         for (String line : wrap(text, font, size, width, arabic)) {
-            String drawable = arabic ? ArabicText.shapeForPdf(line) : line;
+            String shaped = arabic ? ArabicText.shapeForPdf(line) : line;
+            // Guards against any character (including a raw control character
+            // such as an embedded newline that wrap() never split on) that
+            // this font cannot encode — PDFBox throws for those instead of
+            // degrading gracefully the way V1 (PDFKit) did.
+            String drawable = SafeText.forFont(font, shaped);
             float lineWidth = PdfFonts.width(font, drawable, size);
             float startX = switch (effective) {
                 case LEFT -> x;
@@ -111,8 +117,17 @@ final class SlideCanvas implements AutoCloseable {
         }
     }
 
-    /** Upper-cases Latin text; Arabic has no case and is left as is (V1 did the same). */
+    /**
+     * Upper-cases Latin text; Arabic has no case and is left as is (V1 did
+     * the same). A null title is realistic (it comes straight off the AI
+     * response's JSON with no non-null enforcement) so this is guarded here,
+     * once, rather than at each of the eight call sites that pass
+     * {@code slide.title()} straight through.
+     */
     void heading(String text, float x, float yFromTop, float width, float size, Color color, Align align) throws IOException {
+        if (text == null) {
+            return;
+        }
         text(ArabicText.isArabic(text) ? text : text.toUpperCase(), x, yFromTop, width, size, Weight.BOLD, color, align);
     }
 

@@ -59,4 +59,44 @@ class ProposalPdfRendererTest {
             assertThat(doc.getNumberOfPages()).isEqualTo(1);
         }
     }
+
+    @Test
+    void nullSlideTitleDoesNotThrowForAnyTypedRenderer() throws IOException {
+        // slide.title() is a plain nullable String deserialized from the AI
+        // response's JSON with no non-null enforcement, so an AI response
+        // that omits a title is realistic input, not an adversarial one.
+        // Every typed renderer except cover() (which never reads
+        // slide.title()) passes it straight into SlideCanvas.heading(),
+        // which used to NPE on text.toUpperCase().
+        List<ProposalSlide> slides = List.of(
+                new ProposalSlide(1, "summary", null, null, Map.of()),
+                new ProposalSlide(2, "concept", null, null, Map.of()),
+                new ProposalSlide(3, "agenda", null, null, Map.of()),
+                new ProposalSlide(4, "activities", null, null, Map.of()),
+                new ProposalSlide(5, "venue", null, null, Map.of()),
+                new ProposalSlide(6, "catering", null, null, Map.of()),
+                new ProposalSlide(7, "investment", null, null, Map.of()),
+                new ProposalSlide(8, "closing", null, null, Map.of()));
+
+        byte[] pdf = renderer.render(slides, "Acme");
+
+        try (PDDocument doc = Loader.loadPDF(pdf)) {
+            assertThat(doc.getNumberOfPages()).isEqualTo(8);
+        }
+    }
+
+    @Test
+    void embeddedNewlineInSlideContentDoesNotThrow() throws IOException {
+        // SlideCanvas.wrap() splits only on " ", never on "\n"/"\r", so a
+        // literal newline with no adjacent space (as could appear in
+        // AI-generated content) survives inside a single "word" token and
+        // reaches showText() as a raw, undrawable control character.
+        byte[] pdf = renderer.render(List.of(
+                new ProposalSlide(1, "concept", "Theme", null,
+                        Map.of("themeName", "Heist", "description", "Line one\nLine two"))), "Acme");
+
+        try (PDDocument doc = Loader.loadPDF(pdf)) {
+            assertThat(doc.getNumberOfPages()).isEqualTo(1);
+        }
+    }
 }

@@ -148,7 +148,7 @@ public final class MixedTextWriter {
         content.beginText();
         content.setFont(font, size);
         content.newLineAtOffset(atX, atY);
-        content.showText(text);
+        content.showText(SafeText.forFont(font, text));
         content.endText();
     }
 
