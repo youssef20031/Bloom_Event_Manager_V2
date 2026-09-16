@@ -1,0 +1,22 @@
+server:
+  port: 8086
+
+spring:
+  data:
+    mongodb:
+      uri: ${MONGO_URI:mongodb://localhost:27017}
+      # Overrides any database in the URI. Set MONGO_TOKEN_DB to V1's database
+      # name to reuse the token V1 already stored.
+      database: ${MONGO_TOKEN_DB:tokendb}
+      auto-index-creation: true
+
+bloom:
+  storage:
+    client-id: ${GOOGLE_CLIENT_ID:}
+    client-secret: ${GOOGLE_CLIENT_SECRET:}
+    credentials-path: ${GOOGLE_CREDENTIALS_PATH:./secrets/client_secret.json}
+    # Registered in Google Cloud Console. The gateway's legacy shim owns this path.
+    redirect-uri: ${GOOGLE_OAUTH_REDIRECT_URI:http://localhost:8080/api/rag/auth/google/callback}
+    root-folder-id: ${GOOGLE_DRIVE_FOLDER_ID:}
+    sync-interval-ms: ${DRIVE_SYNC_INTERVAL_MS:300000}
+    frontend-url: ${FRONTEND_URL:http://localhost:5173}
