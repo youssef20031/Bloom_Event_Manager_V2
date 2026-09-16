@@ -9,6 +9,7 @@ import org.mockito.ArgumentCaptor;
 import tools.jackson.databind.json.JsonMapper;
 
 import com.bloom.eventmanager.common.error.BloomException;
+import com.bloom.eventmanager.common.error.ExternalServiceException;
 import com.bloom.eventmanager.common.error.NotFoundException;
 import com.bloom.eventmanager.proposal.client.AiClient;
 import com.bloom.eventmanager.proposal.client.ChatClient;
@@ -121,7 +122,30 @@ class GenerateProposalUseCaseTest {
         stubHappyPath();
         when(chat.sessionsMentioning("Acme Corp")).thenThrow(new RuntimeException("chat down"));
 
-        assertThat(useCase.execute("Acme Corp").slides()).isNotEmpty();
+        GeneratedProposal proposal = useCase.execute("Acme Corp");
+
+        assertThat(proposal.slides()).isNotEmpty();
+        ArgumentCaptor<GenerateRequest> request = ArgumentCaptor.forClass(GenerateRequest.class);
+        verify(ai).generate(request.capture());
+        assertThat(request.getValue().input()).doesNotContain("EVENT ADVISOR CONVERSATIONS");
+    }
+
+    @Test
+    void knowledgeServiceFailureBecomesExternalServiceException() {
+        when(knowledge.allSources()).thenThrow(new RuntimeException("neo4j down"));
+
+        assertThatThrownBy(() -> useCase.execute("Acme Corp"))
+                .isInstanceOf(ExternalServiceException.class);
+        verify(ai, never()).generate(any());
+    }
+
+    @Test
+    void aiGenerateFailureBecomesExternalServiceException() {
+        stubHappyPath();
+        when(ai.generate(any())).thenThrow(new RuntimeException("gemini down"));
+
+        assertThatThrownBy(() -> useCase.execute("Acme Corp"))
+                .isInstanceOf(ExternalServiceException.class);
     }
 
     @Test
