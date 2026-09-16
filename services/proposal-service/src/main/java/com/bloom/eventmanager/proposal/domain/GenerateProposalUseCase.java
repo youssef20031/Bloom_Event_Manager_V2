@@ -57,11 +57,8 @@ public class GenerateProposalUseCase {
         }
         log.info("Generating AI proposal for: {}", companyName);
 
-        // Step 1: sources whose name contains the company. V1 matches on the
-        // full company name; we match on its leading word instead, so that a
-        // company folder ("Acme Corp/brief.pdf") and a flat, slug-named source
-        // ("acme-notes.pdf") are both picked up.
-        String needle = companyName.trim().toLowerCase().split("\\s+")[0];
+        // Step 1: sources whose name contains the company (case-insensitive)
+        String needle = companyName.toLowerCase();
         List<String> companySources = safely(knowledge::allSources, "knowledge-service").stream()
                 .filter(s -> s.toLowerCase().contains(needle))
                 .toList();

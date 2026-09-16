@@ -46,10 +46,14 @@ class GenerateProposalUseCaseTest {
 
     @Test
     void assemblesBriefChunksChatHistoryAndTeambuildingKnowledgeIntoV1sPrompt() {
-        when(knowledge.allSources()).thenReturn(List.of("Acme Corp/brief.pdf", "guide.pdf", "acme-notes.pdf"));
-        when(knowledge.chunksBySources(new ChunksBySourcesRequest(List.of("Acme Corp/brief.pdf", "acme-notes.pdf"), 50)))
+        // "acme corp/notes.pdf" is deliberately lowercase to pin V1's
+        // case-insensitive match against the mixed-case company name, while
+        // still genuinely containing "Acme Corp" (unlike an unrelated
+        // "guide.pdf") and demonstrating that multiple matches are all used.
+        when(knowledge.allSources()).thenReturn(List.of("Acme Corp/brief.pdf", "guide.pdf", "acme corp/notes.pdf"));
+        when(knowledge.chunksBySources(new ChunksBySourcesRequest(List.of("Acme Corp/brief.pdf", "acme corp/notes.pdf"), 50)))
                 .thenReturn(List.of(new ChunkMatch("c1", "40 people, June", "Acme Corp/brief.pdf", 1, 1.0),
-                        new ChunkMatch("c2", "loves puzzles", "acme-notes.pdf", 1, 1.0)));
+                        new ChunkMatch("c2", "loves puzzles", "acme corp/notes.pdf", 1, 1.0)));
         when(chat.sessionsMentioning("Acme Corp")).thenReturn(List.of(new ChatSession("s1",
                 List.of(new ChatMessage("user", "Acme Corp wants mystery", Instant.now(), List.of(), null),
                         new ChatMessage("model", "Try a heist theme", Instant.now(), List.of(), null)),
