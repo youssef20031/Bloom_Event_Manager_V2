@@ -1,0 +1,32 @@
+server:
+  port: 8086
+
+spring:
+  # `spring.mongodb.*`, NOT `spring.data.mongodb.*`. Boot 4 deprecated the
+  # latter in favour of the former, and `spring.mongodb.uri` carries a non-null
+  # default of `mongodb://localhost/test` that silently shadows the deprecated
+  # keys — no warning, no failure. Phase 3b verification found the OAuth token
+  # written to `test` while this file said `tokendb`. Only `auto-index-creation`
+  # still lives under `spring.data.mongodb` (it is a Spring Data concern).
+  mongodb:
+    uri: ${MONGO_URI:mongodb://localhost:27017}
+    # Set MONGO_TOKEN_DB to V1's database name to reuse the token V1 stored.
+    database: ${MONGO_TOKEN_DB:tokendb}
+  data:
+    mongodb:
+      # Deliberately off. Auto-index creation runs during context refresh, so an
+      # unreachable MongoDB aborts startup instead of degrading to
+      # "unauthenticated" the way MongoTokenStore.load is written to. The index
+      # is created by DriveTokenIndexInitializer, which tolerates failure.
+      auto-index-creation: false
+
+bloom:
+  storage:
+    client-id: ${GOOGLE_CLIENT_ID:}
+    client-secret: ${GOOGLE_CLIENT_SECRET:}
+    credentials-path: ${GOOGLE_CREDENTIALS_PATH:./secrets/client_secret.json}
+    # Registered in Google Cloud Console. The gateway's legacy shim owns this path.
+    redirect-uri: ${GOOGLE_OAUTH_REDIRECT_URI:http://localhost:8080/api/rag/auth/google/callback}
+    root-folder-id: ${GOOGLE_DRIVE_FOLDER_ID:}
+    sync-interval-ms: ${DRIVE_SYNC_INTERVAL_MS:300000}
+    frontend-url: ${FRONTEND_URL:http://localhost:5173}

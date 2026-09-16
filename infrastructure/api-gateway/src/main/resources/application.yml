@@ -22,6 +22,20 @@ spring:
                 - Path=/api/v1/rag/ping
               filters:
                 - RewritePath=/api/v1/rag/ping,/api/v1/ping
+            # sync-auth must precede sync: the more specific path wins only
+            # because the gateway matches routes in declaration order.
+            - id: sync-auth
+              uri: lb://storage-service
+              predicates:
+                - Path=/api/v1/rag/sync/auth,/api/v1/rag/sync/auth/**
+              filters:
+                - RewritePath=/api/v1/rag/sync/auth(?<rest>.*),/api/v1/storage/auth$\{rest}
+            - id: sync
+              uri: lb://storage-service
+              predicates:
+                - Path=/api/v1/rag/sync,/api/v1/rag/sync/**
+              filters:
+                - RewritePath=/api/v1/rag/sync(?<rest>.*),/api/v1/storage/sync$\{rest}
             - id: retrieve
               uri: lb://retrieval-service
               predicates:

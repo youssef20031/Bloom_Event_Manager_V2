@@ -33,6 +33,7 @@
         <module>services/ai-service</module>
         <module>services/retrieval-service</module>
         <module>services/ingestion-service</module>
+        <module>services/storage-service</module>
         <module>infrastructure/api-gateway</module>
     </modules>
 

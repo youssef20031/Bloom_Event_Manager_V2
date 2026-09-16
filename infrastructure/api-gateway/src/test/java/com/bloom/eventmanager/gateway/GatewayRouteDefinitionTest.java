@@ -61,4 +61,13 @@ class GatewayRouteDefinitionTest {
         assertThat(route).isNotNull();
         assertThat(route.getUri()).hasToString("lb://ingestion-service");
     }
+
+    @Test
+    void routesSyncAuthAndSyncToStorageInThatOrder() {
+        List<String> ids = routeLocator.getRoutes().map(Route::getId).collectList().block();
+
+        assertThat(ids).containsSubsequence("sync-auth", "sync");
+        assertThat(routeLocator.getRoutes().filter(r -> "sync".equals(r.getId())).blockFirst().getUri())
+                .hasToString("lb://storage-service");
+    }
 }
