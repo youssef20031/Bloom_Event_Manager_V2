@@ -8,6 +8,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -34,6 +36,8 @@ import com.bloom.eventmanager.proposal.pdf.ProposalPdfRenderer;
 @RestController
 @RequestMapping("/api/v1/proposals")
 public class ProposalController {
+
+    private static final Logger log = LoggerFactory.getLogger(ProposalController.class);
 
     private final GenerateProposalUseCase generate;
     private final ProposalPdfRenderer renderer;
@@ -63,7 +67,11 @@ public class ProposalController {
                 chatCount = chat.countMentioning(folder.name()).count();
             }
             catch (RuntimeException ex) {
-                chatCount = 0; // chat history is an enrichment, not a dependency
+                // chat history is an enrichment, not a dependency; degrade to 0
+                // rather than fail the whole company list, but log it so an
+                // outage is distinguishable from "no mentions" in the logs.
+                log.warn("Could not retrieve chat count for company '{}', defaulting to 0", folder.name(), ex);
+                chatCount = 0;
             }
             Map<String, Object> company = new LinkedHashMap<>();
             company.put("id", folder.id());
