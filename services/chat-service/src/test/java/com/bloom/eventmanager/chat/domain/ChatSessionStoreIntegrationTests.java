@@ -1,7 +1,13 @@
 package com.bloom.eventmanager.chat.domain;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import org.bson.Document;
 import org.junit.jupiter.api.BeforeEach;
@@ -39,9 +45,15 @@ class ChatSessionStoreIntegrationTests {
     @Autowired
     private MongoTemplate template;
 
+    /**
+     * Clears documents without dropping the collection: a drop also drops the
+     * unique {@code sessionId} index that auto-index-creation built once at
+     * context startup, and without it a concurrent append racing on a brand-new
+     * session id has nothing stopping MongoDB from inserting two documents.
+     */
     @BeforeEach
     void clean() {
-        template.getCollection("chatsessions").drop();
+        template.getCollection("chatsessions").deleteMany(new Document());
     }
 
     @Test
@@ -104,11 +116,65 @@ class ChatSessionStoreIntegrationTests {
         store.append("s1", List.of(msg("user", "Ideas for ACME Corp offsite")));
         store.append("s2", List.of(msg("user", "Something else"), msg("model", "acme corp likes puzzles")));
         store.append("s3", List.of(msg("user", "Globex")));
+        store.append("s4", List.of(msg("user", "Loves A.C.M.E (Corp) swag")));
 
         assertThat(store.mentioning("Acme Corp")).extracting(ChatSessionDocument::getSessionId)
                 .containsExactlyInAnyOrder("s1", "s2");
         assertThat(store.countMentioning("acme corp")).isEqualTo(2);
-        assertThat(store.countMentioning("A.C.M.E (Corp)")).isZero(); // regex metacharacters are escaped
+
+        // True positive: a company name that is itself built from regex metacharacters
+        // still matches the session that genuinely mentions it, once escaped.
+        assertThat(store.mentioning("A.C.M.E (Corp)")).extracting(ChatSessionDocument::getSessionId)
+                .containsExactly("s4");
+        assertThat(store.countMentioning("A.C.M.E (Corp)")).isEqualTo(1);
+
+        // False positive guard: metacharacters are escaped, not interpreted, so a
+        // differently-shaped metacharacter string that no session mentions matches nothing.
+        assertThat(store.countMentioning("Glob.ex (Ltd)")).isZero();
+    }
+
+    /**
+     * Pins the atomicity of {@link ChatSessionStore#append}: it must be a single
+     * server-side findAndModify ($push/$setOnInsert), not a read-modify-write
+     * save(), or two concurrent appends to the same session race and the second
+     * save() overwrites the first wholesale, silently dropping its messages.
+     */
+    @Test
+    void concurrentAppendsToTheSameSessionDoNotLoseMessages() throws Exception {
+        int threadCount = 10;
+        ExecutorService pool = Executors.newFixedThreadPool(threadCount);
+        CountDownLatch ready = new CountDownLatch(threadCount);
+        CountDownLatch start = new CountDownLatch(1);
+        List<Future<?>> futures = new ArrayList<>();
+        try {
+            for (int i = 0; i < threadCount; i++) {
+                int threadId = i;
+                futures.add(pool.submit(() -> {
+                    ready.countDown();
+                    start.await();
+                    store.append("concurrent", List.of(msg("user", "t" + threadId + "-a"),
+                            msg("model", "t" + threadId + "-b")));
+                    return null;
+                }));
+            }
+            ready.await();
+            start.countDown();
+            for (Future<?> future : futures) {
+                future.get(10, TimeUnit.SECONDS);
+            }
+        } finally {
+            pool.shutdown();
+        }
+
+        List<String> contents = store.find("concurrent").orElseThrow().getMessages().stream()
+                .map(ChatMessage::content).toList();
+
+        List<String> expected = new ArrayList<>();
+        for (int i = 0; i < threadCount; i++) {
+            expected.add("t" + i + "-a");
+            expected.add("t" + i + "-b");
+        }
+        assertThat(contents).containsExactlyInAnyOrderElementsOf(expected);
     }
 
     private static ChatMessage msg(String role, String content) {

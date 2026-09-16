@@ -1,13 +1,17 @@
 package com.bloom.eventmanager.chat.domain;
 
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.regex.Pattern;
 
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.data.domain.Sort;
+import org.springframework.data.mongodb.core.FindAndModifyOptions;
+import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.query.Criteria;
+import org.springframework.data.mongodb.core.query.Query;
+import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.stereotype.Service;
 
 /** V1's MongoChatRepository. */
@@ -15,9 +19,11 @@ import org.springframework.stereotype.Service;
 public class ChatSessionStore {
 
     private final ChatSessionRepository repository;
+    private final MongoTemplate mongoTemplate;
 
-    public ChatSessionStore(ChatSessionRepository repository) {
+    public ChatSessionStore(ChatSessionRepository repository, MongoTemplate mongoTemplate) {
         this.repository = repository;
+        this.mongoTemplate = mongoTemplate;
     }
 
     public Optional<ChatSessionDocument> find(String sessionId) {
@@ -33,24 +39,33 @@ public class ChatSessionStore {
                 .orElse(List.of());
     }
 
-    /** Upsert: creates the session on first append (V1's findOneAndUpdate with upsert). */
+    /**
+     * Atomic upsert (V1's findOneAndUpdate with {@code $push} and upsert): a single
+     * server-side findAndModify appends the messages and stamps {@code updatedAt}
+     * (only {@code $setOnInsert} stamps {@code createdAt}, so it is written once).
+     * A read-modify-write here — find, mutate the list in memory, save() the whole
+     * document — would let two concurrent appends to the same session race, with
+     * the second save() overwriting the first wholesale and silently dropping its
+     * messages; findAndModify's {@code $push} is applied atomically per document,
+     * so that cannot happen.
+     */
     public void append(String sessionId, List<ChatMessage> messages) {
         Instant now = Instant.now();
-        ChatSessionDocument session = repository.findBySessionId(sessionId).orElseGet(() -> {
-            ChatSessionDocument fresh = new ChatSessionDocument();
-            fresh.setSessionId(sessionId);
-            fresh.setCreatedAt(now);
-            return fresh;
-        });
-        List<ChatMessage> updated = new ArrayList<>(session.getMessages());
-        for (ChatMessage message : messages) {
-            updated.add(message.timestamp() == null
-                    ? new ChatMessage(message.role(), message.content(), now, message.sources(), message.thoughts())
-                    : message);
-        }
-        session.setMessages(updated);
-        session.setUpdatedAt(now);
-        repository.save(session);
+        List<ChatMessage> stamped = messages.stream()
+                .map(message -> message.timestamp() == null
+                        ? new ChatMessage(message.role(), message.content(), now, message.sources(), message.thoughts())
+                        : message)
+                .toList();
+
+        Query query = Query.query(Criteria.where("sessionId").is(sessionId));
+        Update update = new Update()
+                .push("messages").each(stamped.toArray())
+                .set("updatedAt", now)
+                .setOnInsert("sessionId", sessionId)
+                .setOnInsert("createdAt", now);
+
+        mongoTemplate.findAndModify(query, update, FindAndModifyOptions.options().upsert(true),
+                ChatSessionDocument.class);
     }
 
     public List<ChatSessionDocument> summaries() {
