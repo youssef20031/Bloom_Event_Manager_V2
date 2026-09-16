@@ -358,6 +358,23 @@ Subfolder paths survive intact — `dell/`, `Dell Technologies/`,
 so the live folders contain spaces and "fixing" the regex would create
 duplicates.
 
+The add/modify/delete lifecycle was then exercised on a throwaway PDF uploaded
+through `POST /api/v1/storage/files`, so none of the 24 real files were touched:
+
+| Step | Detected as | Result |
+| --- | --- | --- |
+| Upload via the storage API | `1 added` of 25 seen | ingested, `drive-files` 24 → 25 |
+| Content replaced in Drive | `0 added, 1 modified, 0 deleted` | re-indexed, still **1** chunk |
+| File deleted from Drive | `0 added, 0 modified, 1 deleted` | `Deleted 1 chunks`, `drive-files` back to 24 |
+
+Re-indexing genuinely replaces rather than appends: after the modification the
+file's only chunk contained the new marker and the old one was unfindable, and
+the chunk count stayed at 1. After the deletion `/sync/check` reported
+`hasChanges: false` — Drive and Neo4j fully reconciled.
+
+A cold restart of the whole stack, containers included, reloaded the token from
+`tokendb` and found all 24 files still recorded, with no re-consent.
+
 ### The Google consent endpoint must be v2, not the Java client default
 
 `GoogleOAuthConstants.AUTHORIZATION_SERVER_URL` is the legacy
