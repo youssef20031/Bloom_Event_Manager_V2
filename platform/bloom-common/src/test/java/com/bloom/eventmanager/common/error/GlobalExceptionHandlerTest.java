@@ -66,6 +66,29 @@ class GlobalExceptionHandlerTest {
         assertThat(problem.getProperties()).containsEntry("errorCode", "VALIDATION_FAILED");
     }
 
+    @Test
+    void copiesExceptionPropertiesOntoTheProblemDetail() {
+        BloomException withProps = new BloomException(ErrorCode.DRIVE_NOT_AUTHENTICATED, "Google Drive not authenticated.") {
+            @Override
+            public java.util.Map<String, Object> properties() {
+                return java.util.Map.of("authUrl", "/api/v1/rag/sync/auth?force=true");
+            }
+        };
+
+        ProblemDetail problem = handler.handleBloom(withProps);
+
+        assertThat(problem.getStatus()).isEqualTo(401);
+        assertThat(problem.getProperties()).containsEntry("authUrl", "/api/v1/rag/sync/auth?force=true")
+                .containsEntry("errorCode", "DRIVE_NOT_AUTHENTICATED");
+    }
+
+    @Test
+    void conflictMapsTo409() {
+        ProblemDetail problem = handler.handleBloom(new BloomException(ErrorCode.CONFLICT, "Sync already in progress"));
+
+        assertThat(problem.getStatus()).isEqualTo(409);
+    }
+
     @SuppressWarnings("unused")
     private static final class Probe {
         void handle(String text) {

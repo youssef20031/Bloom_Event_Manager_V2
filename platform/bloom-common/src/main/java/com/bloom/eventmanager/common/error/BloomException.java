@@ -17,4 +17,12 @@ public class BloomException extends RuntimeException {
     public ErrorCode errorCode() {
         return errorCode;
     }
+
+    /**
+     * Extra members for the RFC 9457 body. Subclasses override to add things
+     * like a re-auth URL; the handler copies every entry onto the ProblemDetail.
+     */
+    public java.util.Map<String, Object> properties() {
+        return java.util.Map.of();
+    }
 }

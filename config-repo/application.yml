@@ -1,4 +1,19 @@
 # Applied to every service that imports this Config Server.
+spring:
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      # ChunkBatchReady: up to 20 chunks x ~12 KB embeddings. Compress, and raise
+      # the ceiling well above the 1 MB default. Keep in step with the broker's
+      # KAFKA_MESSAGE_MAX_BYTES in deploy/docker-compose.yml.
+      compression-type: lz4
+      properties:
+        max.request.size: 5242880
+    consumer:
+      auto-offset-reset: earliest
+      properties:
+        max.partition.fetch.bytes: 5242880
+
 eureka:
   client:
     service-url:

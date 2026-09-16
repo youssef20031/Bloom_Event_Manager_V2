@@ -46,4 +46,19 @@ class GatewayRouteDefinitionTest {
         assertThat(route).isNotNull();
         assertThat(route.getUri()).hasToString("lb://retrieval-service");
     }
+
+    /**
+     * Guards the RewritePath escaping as much as the route: an unescaped
+     * {@code ${rest}} is swallowed as a property placeholder, and the route
+     * then fails to build rather than misbehaving at runtime.
+     */
+    @Test
+    void routesIngestToTheIngestionService() {
+        Route route = routeLocator.getRoutes()
+                .filter(r -> "ingest".equals(r.getId()))
+                .blockFirst();
+
+        assertThat(route).isNotNull();
+        assertThat(route.getUri()).hasToString("lb://ingestion-service");
+    }
 }

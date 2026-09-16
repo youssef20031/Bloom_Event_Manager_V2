@@ -193,6 +193,17 @@ public class Neo4jChunkRepository implements ChunkRepository {
     }
 
     @Override
+    public int countChunks(String source) {
+        String cypher = """
+                OPTIONAL MATCH (:Document {id: $source})-[:HAS_CHUNK]->(c:Chunk)
+                RETURN count(c) AS n
+                """;
+        try (Session session = driver.session()) {
+            return session.run(cypher, Map.of("source", source)).single().get("n").asInt();
+        }
+    }
+
+    @Override
     public int deleteDocument(String source) {
         String cypher = """
                 MATCH (doc:Document {id: $source})

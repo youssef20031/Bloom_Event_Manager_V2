@@ -81,7 +81,14 @@ services:
 
   kafka:
     # KRaft mode: no ZooKeeper container needed.
-    image: apache/kafka:3.9.0
+    #
+    # 4.x, not 3.9: Testcontainers 2.0.5's KafkaContainer starts the image with
+    # 0.0.0.0 advertised listeners, and 3.9's StorageTool refuses them outright,
+    # so integration tests could not run a 3.9 broker at all. Keeping the dev
+    # broker on the same major as the test broker — and as the kafka-clients
+    # 4.1.2 that Spring Kafka 4.0.7 pulls in — avoids testing against one
+    # version and running against another.
+    image: apache/kafka:4.1.0
     profiles: ["infra"]
     container_name: bloom-v2-kafka
     restart: unless-stopped

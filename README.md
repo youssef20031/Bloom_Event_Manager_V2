@@ -5,7 +5,7 @@ Spring microservices rebuild of the Bloom Event Manager. The V1 monolith
 reference implementation.
 
 - **Design spec:** `docs/superpowers/specs/2026-08-30-bloom-spring-microservices-design.md`
-- **Current phase:** Phase 2 — Read path
+- **Current phase:** Phase 3a — Write path: ingestion over Kafka
 
 ## Stack
 
@@ -33,6 +33,7 @@ Boot 4.0 also split its test support into per-technology modules that
 | `services/knowledge-service` | 8082 | Skeleton; owns Neo4j from Phase 1 |
 | `services/ai-service` | 8081 | Gemini embedding and generation, Redis-cached |
 | `services/retrieval-service` | 8084 | Dual-search orchestration; owns no data |
+| `services/ingestion-service` | 8083 | PDF parsing, OCR, chunking, embedding; publishes chunk batches |
 
 ## Running locally
 
@@ -269,3 +270,56 @@ with `No qualifying bean of type 'CacheManager'`. As a scanned
 `@Configuration` it is filtered out of web slices and still picked up by the
 full context, where `QueryVariationCachingTests` proves the Caffeine cache
 actually engages. Do not move it back.
+
+## Phase 3a verification (2026-09-16)
+
+`./mvnw clean install` — BUILD SUCCESS across eleven reactor projects.
+
+Two purpose-built PDFs were ingested through the gateway with
+`POST /api/v1/rag/ingest`, against the live stack and a real Gemini key:
+
+| Source | Chunks | OCR | Retrieval rank for its own phrase |
+| --- | --- | --- | --- |
+| `phase3a-smoke-test.pdf` (text layer) | 1 | no | 1st, score 0.854 |
+| `phase3a-scanned-test.pdf` (image only, no text layer) | 1 | **yes** | 1st, score 0.9282 |
+
+The scanned file has no text layer at all — its words exist only as pixels —
+so PDFBox extracted nothing and Tess4J's OCR produced the text that was
+embedded and indexed. Retrieving it returns `SCANNED INGEST CHECK /
+Kilimanjaro paper bridge challenge`, which is the OCR output.
+
+`bloom.documents.indexed` carried
+`{"source":"phase3a-smoke-test.pdf","driveFileId":null,"chunkCount":1,…}` —
+`driveFileId` null because this is the local path, not Drive.
+
+Re-running the same ingest left the chunk count at 1 with the id
+`phase3a-smoke-test.pdf-0-0`: deterministic ids plus the delete-then-MERGE
+order make re-ingestion idempotent.
+
+A poison message on `bloom.chunks.batch-ready` was retried three times with
+growing gaps (2s, 4s) and then parked on the dead-letter topic.
+
+### The dead-letter topic is `-dlt`, not `.DLT`
+
+Spring Kafka 4.x names it `bloom.chunks.batch-ready-dlt`. Searching the topic
+list for `.DLT` finds nothing and looks like the error handler never fired.
+
+### Every service declares the topics it consumes, not just the ones it produces
+
+Phase 3a verification caught this the hard way. `knowledge-service` was started
+before `ingestion-service`, its listener subscribed to
+`bloom.chunks.batch-ready`, and the broker auto-created that topic with its
+default **single** partition. `ingestion-service` then started and its
+`NewTopic` bean raised the topic to three partitions — but the running consumer
+kept its one-partition view and was assigned only partition 0. A test message
+sat unconsumed on partition 2 for over ten minutes; it did not self-heal.
+
+In production that is silent data loss: two thirds of every document's chunk
+batches would never be indexed, with no error anywhere. The fix is that each
+service now declares a `NewTopic` for the topics it *consumes* as well as the
+ones it produces — `KafkaAdmin` is idempotent, both sides agree on three
+partitions, and whichever starts first creates the topic with the right shape.
+Restarting `knowledge-service` with the declarations in place assigned all
+three partitions and drained the stranded message to the dead-letter topic.
+
+Do not "tidy up" those consumer-side `NewTopic` beans on ownership grounds.
