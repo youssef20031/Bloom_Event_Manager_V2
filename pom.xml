@@ -36,6 +36,7 @@
         <module>services/ingestion-service</module>
         <module>services/storage-service</module>
         <module>services/chat-service</module>
+        <module>services/proposal-service</module>
         <module>infrastructure/api-gateway</module>
     </modules>
 
