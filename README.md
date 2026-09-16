@@ -5,7 +5,7 @@ Spring microservices rebuild of the Bloom Event Manager. The V1 monolith
 reference implementation.
 
 - **Design spec:** `docs/superpowers/specs/2026-08-30-bloom-spring-microservices-design.md`
-- **Current phase:** Phase 3a — Write path: ingestion over Kafka
+- **Current phase:** Phase 3b — Write path: Google Drive sync
 
 ## Stack
 
@@ -34,6 +34,7 @@ Boot 4.0 also split its test support into per-technology modules that
 | `services/ai-service` | 8081 | Gemini embedding and generation, Redis-cached |
 | `services/retrieval-service` | 8084 | Dual-search orchestration; owns no data |
 | `services/ingestion-service` | 8083 | PDF parsing, OCR, chunking, embedding; publishes chunk batches |
+| `services/storage-service` | 8086 | Sole holder of Google Drive OAuth; Drive sync, folder conventions |
 
 ## Running locally
 
@@ -323,3 +324,64 @@ Restarting `knowledge-service` with the declarations in place assigned all
 three partitions and drained the stranded message to the dead-letter topic.
 
 Do not "tidy up" those consumer-side `NewTopic` beans on ownership grounds.
+
+## Phase 3b verification (2026-09-16)
+
+`./mvnw clean install` — BUILD SUCCESS across twelve reactor projects.
+
+OAuth completed through the gateway's legacy shim against V1's own Google
+client, and the token persisted to Mongo `tokendb.drivetokens` in V1's document
+shape — `accountId` plus `token.{access_token, refresh_token, scope,
+token_type, expiry_date}`, the expiry a `NumberLong` exactly 60 minutes out.
+Restarting `storage-service` logged `Loaded existing Google Drive token`, so a
+V2 deployment pointed at V1's database reuses the token V1 already stored.
+
+`POST /api/v1/rag/sync` queued all 24 PDFs in V1's Drive folder. Every one was
+downloaded, chunked, embedded and indexed with **no manual step**:
+
+| Stage | Evidence |
+| --- | --- |
+| `storage-service` | `Sync: 24 of 24 Drive files queued for ingestion` |
+| `ingestion-service` | `Ingesting from Drive: Dell Technologies/Customer_Brief_…pdf (1rqA4s…)` |
+| `knowledge-service` | `Indexed Dell Technologies/Customer_Brief_…pdf (4 chunks)` |
+| `storage-service` | 24 × `Recorded Drive metadata for …` |
+
+`GET /api/v1/drive-files` then listed 24 ids against RFC 3339 `modifiedTime`
+strings exactly as Drive returned them, and retrieving "team building
+activities" came back with chunks from `Activity_Library.pdf` and
+`dell/Customer_Brief_2026-07-22T09-30-45.pdf`. A second auto-sync poll over the
+same 24 files queued nothing, so change detection is idempotent.
+
+Subfolder paths survive intact — `dell/`, `Dell Technologies/`,
+`Teambuilding/candylove/`. `Dell Technologies` keeping its space is exactly why
+`sanitizeFolderName` must not replace whitespace: V1's `/\s+/` never matched,
+so the live folders contain spaces and "fixing" the regex would create
+duplicates.
+
+### The Google consent endpoint must be v2, not the Java client default
+
+`GoogleOAuthConstants.AUTHORIZATION_SERVER_URL` is the legacy
+`https://accounts.google.com/o/oauth2/auth`. Against this OAuth client it
+answers `Error 400: invalid_scope` *after* sign-in, reporting a garbled scope
+(`invalid=[ht]`) even though the request carries both Drive scopes intact. The
+byte-identical request to `https://accounts.google.com/o/oauth2/v2/auth`
+completes. V1 never hit this because google-auth-library has always used v2
+(`oauth2AuthBaseUrl`). `DriveAuthManager` now pins v2 and a test asserts it.
+
+The failure is invisible to unit tests: the generated URL is well-formed, and
+an unauthenticated probe of the consent endpoint returns the sign-in page, so
+scope validation is never reached. Only a real browser sign-in surfaces it.
+
+### Mongo properties are `spring.mongodb.*`, not `spring.data.mongodb.*`
+
+Boot 4 deprecated `spring.data.mongodb.uri` and `.database` in favour of
+`spring.mongodb.*`, and `spring.mongodb.uri` carries a non-null default of
+`mongodb://localhost/test`. That default **silently shadows** the deprecated
+keys — no warning, no failure, no startup error. `config-repo` said `tokendb`
+while the OAuth token was being written to `test`.
+
+Left unfixed this would have defeated the entire reason the token is stored in
+V1's shape: `MONGO_TOKEN_DB` could never have pointed a V2 deployment at V1's
+database, and every deployment would have demanded a fresh consent. Only
+`auto-index-creation` still lives under `spring.data.mongodb`. Check the
+database a service actually writes to, rather than the one its config names.
