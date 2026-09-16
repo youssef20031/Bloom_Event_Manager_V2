@@ -67,7 +67,9 @@ class DriveAuthManagerTest {
 
         String url = auth.authUrl();
 
-        assertThat(url).startsWith("https://accounts.google.com/o/oauth2/auth")
+        // v2, not the library's legacy /o/oauth2/auth: the v1 endpoint rejects this
+        // client's request with invalid_scope after sign-in. See DriveAuthManager.
+        assertThat(url).startsWith("https://accounts.google.com/o/oauth2/v2/auth")
                 .contains("client_id=cid")
                 // GenericUrl leaves ':' and '/' unescaped in a query value — legal per
                 // RFC 3986 section 3.4, and the exact form Google's own Java client sends.

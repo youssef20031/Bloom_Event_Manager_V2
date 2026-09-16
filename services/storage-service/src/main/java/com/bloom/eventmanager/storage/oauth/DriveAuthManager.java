@@ -32,6 +32,19 @@ public class DriveAuthManager {
 
     private static final Logger log = LoggerFactory.getLogger(DriveAuthManager.class);
 
+    /**
+     * The v2 consent endpoint, not the google-api-client default
+     * {@link GoogleOAuthConstants#AUTHORIZATION_SERVER_URL} ({@code /o/oauth2/auth}).
+     *
+     * <p>Phase 3b verification: the legacy v1 endpoint answers {@code Error 400:
+     * invalid_scope} after sign-in for this OAuth client, reporting a garbled
+     * scope ({@code invalid=[ht]}) even though the URL carries both Drive scopes
+     * intact. The identical request against {@code /o/oauth2/v2/auth} completes.
+     * V1's google-auth-library has always used v2 ({@code oauth2AuthBaseUrl}),
+     * which is why V1 never hit this. Do not revert to the library default.
+     */
+    static final String AUTHORIZATION_SERVER_URL = "https://accounts.google.com/o/oauth2/v2/auth";
+
     private final StorageProperties properties;
     private final CredentialsResolver resolver;
     private final TokenStore tokenStore;
@@ -77,7 +90,7 @@ public class DriveAuthManager {
     public String authUrl() {
         requireConfigured();
         GoogleAuthorizationCodeRequestUrl url = new GoogleAuthorizationCodeRequestUrl(
-                client.clientId(), properties.redirectUri(), properties.scopes());
+                AUTHORIZATION_SERVER_URL, client.clientId(), properties.redirectUri(), properties.scopes());
         url.setAccessType("offline");
         url.set("prompt", "consent");
         return url.build();

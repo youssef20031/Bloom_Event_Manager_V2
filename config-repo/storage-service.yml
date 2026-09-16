@@ -2,12 +2,18 @@ server:
   port: 8086
 
 spring:
+  # `spring.mongodb.*`, NOT `spring.data.mongodb.*`. Boot 4 deprecated the
+  # latter in favour of the former, and `spring.mongodb.uri` carries a non-null
+  # default of `mongodb://localhost/test` that silently shadows the deprecated
+  # keys — no warning, no failure. Phase 3b verification found the OAuth token
+  # written to `test` while this file said `tokendb`. Only `auto-index-creation`
+  # still lives under `spring.data.mongodb` (it is a Spring Data concern).
+  mongodb:
+    uri: ${MONGO_URI:mongodb://localhost:27017}
+    # Set MONGO_TOKEN_DB to V1's database name to reuse the token V1 stored.
+    database: ${MONGO_TOKEN_DB:tokendb}
   data:
     mongodb:
-      uri: ${MONGO_URI:mongodb://localhost:27017}
-      # Overrides any database in the URI. Set MONGO_TOKEN_DB to V1's database
-      # name to reuse the token V1 already stored.
-      database: ${MONGO_TOKEN_DB:tokendb}
       auto-index-creation: true
 
 bloom:
