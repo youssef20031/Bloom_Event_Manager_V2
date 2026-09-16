@@ -385,3 +385,23 @@ V1's shape: `MONGO_TOKEN_DB` could never have pointed a V2 deployment at V1's
 database, and every deployment would have demanded a fresh consent. Only
 `auto-index-creation` still lives under `spring.data.mongodb`. Check the
 database a service actually writes to, rather than the one its config names.
+
+### MongoDB must not be a startup dependency
+
+`spring.data.mongodb.auto-index-creation` builds indexes during context
+refresh, so an unreachable MongoDB aborts startup with a
+`BeanCreationException` from `CreateIndexesOperation` — long before
+`MongoTokenStore.load`'s deliberate swallow-and-degrade ever runs. Pointing
+`storage-service` at an unreachable cluster made it refuse to start at all,
+rather than starting Drive-less. V1 logs a warning and carries on.
+
+Auto-index creation is therefore off, and `DriveTokenIndexInitializer` creates
+the unique `accountId` index from an `ApplicationRunner` that tolerates
+failure. With MongoDB unreachable the service now starts, logs two warnings and
+serves `/sync/status` with `isAuthenticated: false` and a usable `authUrl`.
+
+It matches the existing index **on shape, never on name**. MongoDB rejects an
+otherwise-identical index under a different name with error 85
+(`IndexOptionsConflict`), and the name depends on who created the collection:
+Spring Data's auto-index creation names it `accountId`, V1's Mongoose names it
+`accountId_1`. Creating it blindly fails against either.

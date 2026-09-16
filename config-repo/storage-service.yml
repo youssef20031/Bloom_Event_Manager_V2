@@ -14,7 +14,11 @@ spring:
     database: ${MONGO_TOKEN_DB:tokendb}
   data:
     mongodb:
-      auto-index-creation: true
+      # Deliberately off. Auto-index creation runs during context refresh, so an
+      # unreachable MongoDB aborts startup instead of degrading to
+      # "unauthenticated" the way MongoTokenStore.load is written to. The index
+      # is created by DriveTokenIndexInitializer, which tolerates failure.
+      auto-index-creation: false
 
 bloom:
   storage:

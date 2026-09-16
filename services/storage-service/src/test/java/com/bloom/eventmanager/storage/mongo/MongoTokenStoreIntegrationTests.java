@@ -21,7 +21,9 @@ import static org.assertj.core.api.Assertions.assertThat;
         "eureka.client.enabled=false",
         "spring.cloud.discovery.enabled=false",
         "spring.kafka.listener.auto-startup=false",
-        "spring.data.mongodb.auto-index-creation=true"
+        // Off in production too: it would make MongoDB a hard startup
+        // dependency. DriveTokenIndexInitializer owns the index instead.
+        "spring.data.mongodb.auto-index-creation=false"
 })
 class MongoTokenStoreIntegrationTests {
 
@@ -38,9 +40,23 @@ class MongoTokenStoreIntegrationTests {
     @Autowired
     private MongoTemplate template;
 
+    @Autowired
+    private DriveTokenIndexInitializer indexInitializer;
+
     @BeforeEach
     void clean() {
         template.getCollection("drivetokens").drop();
+    }
+
+    /** Dropping the collection drops its indexes, so re-run the initializer here. */
+    @Test
+    void theInitializerCreatesTheUniqueAccountIdIndexAgainstARealMongo() {
+        indexInitializer.run(null);
+
+        assertThat(template.indexOps("drivetokens").getIndexInfo())
+                .filteredOn(index -> index.isUnique())
+                .anyMatch(index -> index.getIndexFields().stream()
+                        .anyMatch(field -> "accountId".equals(field.getKey())));
     }
 
     @Test
