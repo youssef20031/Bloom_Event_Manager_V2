@@ -14,8 +14,10 @@ import com.bloom.eventmanager.chat.client.dto.GenerateResponse;
 import com.bloom.eventmanager.chat.client.dto.RetrieveRequest;
 import com.bloom.eventmanager.chat.client.dto.RetrieveResponse;
 import com.bloom.eventmanager.chat.config.ChatProperties;
+import com.bloom.eventmanager.common.error.ExternalServiceException;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
@@ -145,5 +147,25 @@ class ChatWithDocumentsUseCaseTest {
         assertThat(saved.getValue().get(1).role()).isEqualTo("model");
         assertThat(saved.getValue().get(1).sources()).containsExactly("a.pdf");
         assertThat(saved.getValue().get(1).thoughts()).isEqualTo("why");
+    }
+
+    @Test
+    void wrapsRetrievalFailuresAsExternalServiceException() {
+        when(retrieval.retrieve(any())).thenThrow(new RuntimeException("retrieval-service unreachable"));
+
+        assertThatThrownBy(() -> useCase.execute("q", "s1"))
+                .isInstanceOf(ExternalServiceException.class)
+                .hasMessage("Context retrieval failed");
+    }
+
+    @Test
+    void wrapsGenerationFailuresAsExternalServiceExceptionWithADistinctMessage() {
+        when(retrieval.retrieve(any())).thenReturn(new RetrieveResponse("success", List.of(), null));
+        when(ai.generate(any())).thenThrow(new RuntimeException("ai-service unreachable"));
+
+        assertThatThrownBy(() -> useCase.execute("q", "s1"))
+                .isInstanceOf(ExternalServiceException.class)
+                .hasMessage("Event Advisor generation failed")
+                .hasMessageNotContaining("Context retrieval failed");
     }
 }
