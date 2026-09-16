@@ -26,7 +26,16 @@ import org.apache.pdfbox.pdmodel.font.PDFont;
  * it would put the logically last words first, so wrapping is decided on
  * logical (unshaped) groups, and shaping happens only once a group is final.
  *
- * @return the baseline y after the last drawn line
+ * <p>{@link #writeLine} and {@link #measure} both delegate to one private
+ * {@link #layout} pass that decides the wrapping and records every draw
+ * instruction it implies. {@code writeLine} executes those instructions;
+ * {@code measure} only counts how many visual lines they span. Because
+ * there is exactly one place that decides where a line breaks, the two can
+ * never disagree about how tall a call's output will be — a caller that
+ * needs to reserve room before drawing (to decide whether to page-break
+ * first) can trust {@code measure}'s answer completely, which a hardcoded
+ * per-call height estimate cannot offer once wrapping is involved: a single
+ * logical line can wrap into an unbounded number of physical lines.
  */
 public final class MixedTextWriter {
 
@@ -35,9 +44,48 @@ public final class MixedTextWriter {
 
     public static float writeLine(PDPageContentStream content, List<ScriptRuns.Run> runs, float x, float y,
             float maxWidth, float latinSize, float arabicSize, PdfFonts fonts) throws IOException {
-        float leading = Math.max(latinSize, arabicSize) * 1.4f;
-        float cursorX = x;
+        float leading = leading(latinSize, arabicSize);
         float baseline = y;
+        for (List<Segment> line : layout(runs, x, maxWidth, latinSize, arabicSize, fonts)) {
+            for (Segment segment : line) {
+                draw(content, segment.font(), segment.size(), segment.x(), baseline, segment.text());
+            }
+            baseline -= leading;
+        }
+        return baseline;
+    }
+
+    /**
+     * The vertical space {@link #writeLine} will consume for this same input,
+     * without touching a content stream. Callers use this to {@code ensure}
+     * enough room (and page-break first if there isn't any) before drawing.
+     */
+    public static float measure(List<ScriptRuns.Run> runs, float x, float maxWidth, float latinSize,
+            float arabicSize, PdfFonts fonts) {
+        int lineCount = layout(runs, x, maxWidth, latinSize, arabicSize, fonts).size();
+        return lineCount * leading(latinSize, arabicSize);
+    }
+
+    private static float leading(float latinSize, float arabicSize) {
+        return Math.max(latinSize, arabicSize) * 1.4f;
+    }
+
+    /** One resolved draw instruction: font, size, absolute x, and the (already shaped, if Arabic) text. */
+    private record Segment(PDFont font, float size, float x, String text) {
+    }
+
+    /**
+     * Wraps {@code runs} into visual lines and records the exact sequence of
+     * draw instructions each line needs, without drawing anything. This is
+     * the single source of truth for where lines break; both {@link #writeLine}
+     * and {@link #measure} call it so they always agree.
+     */
+    private static List<List<Segment>> layout(List<ScriptRuns.Run> runs, float x, float maxWidth, float latinSize,
+            float arabicSize, PdfFonts fonts) {
+        List<List<Segment>> lines = new ArrayList<>();
+        List<Segment> current = new ArrayList<>();
+        lines.add(current);
+        float cursorX = x;
 
         for (ScriptRuns.Run run : runs) {
             PDFont font = fonts.forRun(run);
@@ -51,10 +99,11 @@ public final class MixedTextWriter {
                     boolean hasContentOnLine = cursorX > x || pending.length() > 0;
                     if (hasContentOnLine && cursorX + candidateWidth > x + maxWidth) {
                         if (pending.length() > 0) {
-                            cursorX += drawShaped(content, font, size, cursorX, baseline, pending.toString());
+                            cursorX += addShaped(current, font, size, cursorX, pending.toString());
                             pending.setLength(0);
                         }
-                        baseline -= leading;
+                        current = new ArrayList<>();
+                        lines.add(current);
                         cursorX = x;
                         if (!word.isBlank()) {
                             pending.append(word);
@@ -65,32 +114,32 @@ public final class MixedTextWriter {
                     }
                 }
                 if (pending.length() > 0) {
-                    cursorX += drawShaped(content, font, size, cursorX, baseline, pending.toString());
+                    cursorX += addShaped(current, font, size, cursorX, pending.toString());
                 }
             }
             else {
                 for (String word : wordsWithSpaces(run.text())) {
                     float width = PdfFonts.width(font, word, size);
                     if (cursorX > x && cursorX + width > x + maxWidth) {
-                        baseline -= leading;
+                        current = new ArrayList<>();
+                        lines.add(current);
                         cursorX = x;
                         if (word.isBlank()) {
                             continue;
                         }
                     }
-                    draw(content, font, size, cursorX, baseline, word);
+                    current.add(new Segment(font, size, cursorX, word));
                     cursorX += width;
                 }
             }
         }
-        return baseline - leading;
+        return lines;
     }
 
-    /** Shapes and bidi-reorders one logical group as a unit, draws it, and returns its width. */
-    private static float drawShaped(PDPageContentStream content, PDFont font, float size, float atX, float atY,
-            String logicalText) throws IOException {
+    /** Shapes and bidi-reorders one logical group as a unit, records it, and returns its drawn width. */
+    private static float addShaped(List<Segment> line, PDFont font, float size, float atX, String logicalText) {
         String shaped = ArabicText.shapeForPdf(logicalText);
-        draw(content, font, size, atX, atY, shaped);
+        line.add(new Segment(font, size, atX, shaped));
         return PdfFonts.width(font, shaped, size);
     }
 

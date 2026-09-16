@@ -170,13 +170,17 @@ public class ChatPdfRenderer {
         }
 
         void mixedLine(String text, float indent) throws IOException {
-            ensure(18);
+            List<ScriptRuns.Run> runs = ScriptRuns.split(text);
+            float x = MARGIN + indent;
+            float maxWidth = width - 2 * MARGIN - indent;
+            // A logical line can wrap into any number of physical lines, so a
+            // fixed "ensure(18)" (room for one line) let long paragraphs draw
+            // past the bottom margin before the overflow was ever noticed.
+            // Measuring first — with the same wrapping MixedTextWriter is
+            // about to use — tells ensure() the real height up front.
+            ensure(MixedTextWriter.measure(runs, x, maxWidth, 12, 11, fonts));
             content.setNonStrokingColor(Color.BLACK);
-            y = MixedTextWriter.writeLine(content, ScriptRuns.split(text), MARGIN + indent, y,
-                    width - 2 * MARGIN - indent, 12, 11, fonts);
-            if (y < MARGIN) {
-                newPage();
-            }
+            y = MixedTextWriter.writeLine(content, runs, x, y, maxWidth, 12, 11, fonts);
         }
 
         void rule() throws IOException {

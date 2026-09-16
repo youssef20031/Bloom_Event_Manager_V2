@@ -2,6 +2,7 @@ package com.bloom.eventmanager.pdf;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.util.List;
 
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
@@ -117,6 +118,50 @@ class MixedTextWriterTest {
                 String text = new PDFTextStripper().getText(reloaded);
                 assertThat(text).contains(word1 + " " + word2);
             }
+        }
+    }
+
+    @Test
+    void measureAgreesWithWriteLinesConsumedHeight() throws IOException {
+        // measure() and writeLine() must derive their line count from the same
+        // wrapping decision (the shared layout() pass) — if they ever computed
+        // wrapping independently, the two could silently drift apart, and a
+        // caller trusting measure() to reserve room before drawing would be
+        // exactly wrong again, just with a different root cause. A small
+        // tolerance is still needed: measure() computes lineCount * leading in
+        // one multiplication, while writeLine derives the same total via
+        // repeated subtraction of the same (not exactly binary-representable)
+        // leading value, so the two can differ by a float ULP or two even when
+        // they agree perfectly on the number of lines.
+        List<ScriptRuns.Run> runs = ScriptRuns.split(
+                "Welcome to **Bloom** فعاليات بناء الفريق and a very long English tail that must wrap onto a second line for sure");
+        float x = 50;
+        float y = 700;
+        float maxWidth = 200;
+        float latinSize = 12;
+        float arabicSize = 11;
+
+        try (PDDocument doc = new PDDocument()) {
+            PDPage page = new PDPage(PDRectangle.LETTER);
+            doc.addPage(page);
+            PdfFonts fonts = PdfFonts.forDocument(doc);
+
+            float measuredHeight = MixedTextWriter.measure(runs, x, maxWidth, latinSize, arabicSize, fonts);
+            float yAfter;
+            try (PDPageContentStream content = new PDPageContentStream(doc, page)) {
+                yAfter = MixedTextWriter.writeLine(content, runs, x, y, maxWidth, latinSize, arabicSize, fonts);
+            }
+
+            assertThat(y - yAfter).isCloseTo(measuredHeight, org.assertj.core.data.Offset.offset(0.01f));
+        }
+    }
+
+    @Test
+    void measureOfAOneLineTextIsExactlyOneLeading() throws IOException {
+        try (PDDocument doc = new PDDocument()) {
+            PdfFonts fonts = PdfFonts.forDocument(doc);
+            float height = MixedTextWriter.measure(ScriptRuns.split("Short line"), 50, 500, 12, 11, fonts);
+            assertThat(height).isEqualTo(12 * 1.4f);
         }
     }
 }

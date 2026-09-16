@@ -1,7 +1,9 @@
 package com.bloom.eventmanager.chat.api;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
@@ -10,6 +12,9 @@ import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+
+import feign.FeignException;
+import feign.Request;
 
 import com.bloom.eventmanager.chat.client.StorageClient;
 import com.bloom.eventmanager.chat.client.dto.ChatBackupRequest;
@@ -106,14 +111,47 @@ class SessionControllerTest {
                 .andExpect(jsonPath("$.drive.webViewLink").value("link"));
     }
 
+    /**
+     * V1 parity: the React app's re-auth handling reads {@code errorCode} and
+     * {@code authUrl} off a 401 to redirect the user through Drive OAuth again.
+     * Nothing else in this module exercises the catch-order in
+     * {@code SessionController.backup} that turns storage-service's 401 into
+     * this shape, so an accidental swap with the generic
+     * {@code ExternalServiceException} catch, or a {@code properties()} override
+     * that drops {@code authUrl}, would otherwise pass every other test here.
+     */
+    @Test
+    void reraisesStorageServicesDriveAuthFailureInV1sShape() throws Exception {
+        when(store.find("s1")).thenReturn(Optional.of(session("s1", "a")));
+        when(renderer.render(any())).thenReturn(new byte[] { 1, 2 });
+        Request request = Request.create("POST", "/api/v1/storage/chat-backups", Map.of(), new byte[0],
+                StandardCharsets.UTF_8);
+        when(storage.uploadChatBackup(any()))
+                .thenThrow(new FeignException.Unauthorized("Unauthorized", request, new byte[0], Map.of()));
+
+        mockMvc.perform(post("/api/v1/chat/sessions/s1/backup"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.errorCode").value("DRIVE_NOT_AUTHENTICATED"))
+                .andExpect(jsonPath("$.authUrl").value("/api/v1/rag/sync/auth?force=true"));
+    }
+
     @Test
     void searchesAndCountsMentions() throws Exception {
+        // proposal-service (Task 5) deserializes this raw array as
+        // List<ChatSession(sessionId, messages, createdAt, updatedAt)>; nothing
+        // else in this repo can catch a field being renamed, dropped, or the
+        // root becoming a wrapped object, since that consumer doesn't exist yet.
         when(store.mentioning("Acme")).thenReturn(List.of(session("s1", "Acme plan")));
         when(store.countMentioning("Acme")).thenReturn(1L);
 
         mockMvc.perform(get("/api/v1/chat/sessions/search").param("mentions", "Acme"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$[0].sessionId").value("s1"));
+                .andExpect(jsonPath("$[0].sessionId").value("s1"))
+                .andExpect(jsonPath("$[0].messages.length()").value(1))
+                .andExpect(jsonPath("$[0].messages[0].content").value("Acme plan"))
+                .andExpect(jsonPath("$[0].createdAt").value("2026-09-15T10:00:00Z"))
+                .andExpect(jsonPath("$[0].updatedAt").value("2026-09-15T10:05:00Z"))
+                .andExpect(jsonPath("$[0].id").doesNotExist());
         mockMvc.perform(get("/api/v1/chat/sessions/count").param("mentions", "Acme"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.count").value(1));
