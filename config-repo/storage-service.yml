@@ -21,6 +21,12 @@ spring:
       auto-index-creation: false
 
 bloom:
+  security:
+    permit-all:
+      # Google redirects the browser here with the authorization code, and a
+      # browser navigation cannot carry a Bearer token. The gateway lets the
+      # matching /api/v1/rag/sync/auth/callback through for the same reason.
+      - /api/v1/storage/auth/callback
   storage:
     client-id: ${GOOGLE_CLIENT_ID:}
     client-secret: ${GOOGLE_CLIENT_SECRET:}
@@ -30,3 +36,13 @@ bloom:
     root-folder-id: ${GOOGLE_DRIVE_FOLDER_ID:}
     sync-interval-ms: ${DRIVE_SYNC_INTERVAL_MS:300000}
     frontend-url: ${FRONTEND_URL:http://localhost:5173}
+
+management:
+  endpoint:
+    health:
+      group:
+        readiness:
+          # Storage owns the OAuth token collection; without Mongo it cannot
+          # serve traffic. Kafka and Eureka stay out — a hiccup there must not
+          # pull the service out of rotation.
+          include: readinessState,mongo
