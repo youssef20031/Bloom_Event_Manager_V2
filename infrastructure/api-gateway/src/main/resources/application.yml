@@ -50,6 +50,30 @@ spring:
                 # $\{rest} is escaped on purpose: a bare ${rest} is consumed as a
                 # Spring property placeholder before the gateway ever sees it.
                 - RewritePath=/api/v1/rag/ingest(?<rest>.*),/api/v1/ingest$\{rest}
+            - id: chat
+              uri: lb://chat-service
+              predicates:
+                - Path=/api/v1/rag/chat,/api/v1/rag/chat/**
+              filters:
+                - RewritePath=/api/v1/rag/chat(?<rest>.*),/api/v1/chat$\{rest}
+            - id: proposals
+              uri: lb://proposal-service
+              predicates:
+                - Path=/api/v1/rag/proposals/**
+              filters:
+                - RewritePath=/api/v1/rag/proposals(?<rest>.*),/api/v1/proposals$\{rest}
+            - id: generate-proposal
+              uri: lb://proposal-service
+              predicates:
+                - Path=/api/v1/rag/generate-proposal
+              filters:
+                - RewritePath=/api/v1/rag/generate-proposal,/api/v1/proposals/generate
+            - id: event-intake
+              uri: lb://proposal-service
+              predicates:
+                - Path=/api/v1/rag/event-intake
+              filters:
+                - RewritePath=/api/v1/rag/event-intake,/api/v1/event-intake
 
 management:
   endpoints:

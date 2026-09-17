@@ -1,0 +1,38 @@
+server:
+  port: 8085
+
+spring:
+  # `spring.mongodb.*`, NOT `spring.data.mongodb.*` — see storage-service.yml's
+  # note: Boot 4 moved `uri`/`database` out of `spring.data.mongodb` entirely
+  # (only `auto-index-creation` remains there), and `spring.mongodb.uri` itself
+  # carries a non-null default (`mongodb://localhost/test`). Leaving `database`
+  # under `spring.data.mongodb` would silently be ignored rather than fail,
+  # and MONGO_CHAT_DB would never take effect.
+  mongodb:
+    uri: ${MONGO_URI:mongodb://localhost:27017}
+    # Set MONGO_CHAT_DB to V1's database to reuse its existing sessions.
+    database: ${MONGO_CHAT_DB:chatdb}
+  data:
+    mongodb:
+      # Deliberately off, matching storage-service.yml's rationale: auto-index
+      # creation runs during context refresh, so an unreachable MongoDB would
+      # abort startup outright, and — the failure actually hit here — V1's
+      # Mongoose already built a unique index on chatsessions.sessionId named
+      # "sessionId_1"; MongoDB rejects a same-key index registered under any
+      # other name (error 85, IndexOptionsConflict), which is exactly what
+      # unassisted auto-index-creation produced against V1's real chatdb. The
+      # index is created by ChatSessionIndexInitializer instead, which
+      # tolerates both an unreachable Mongo and an index V1 already created.
+      auto-index-creation: false
+
+bloom:
+  chat:
+    topK: ${RAG_TOP_K:15}
+    history-limit: 6
+
+management:
+  endpoint:
+    health:
+      group:
+        readiness:
+          include: readinessState,mongo

@@ -422,3 +422,108 @@ otherwise-identical index under a different name with error 85
 (`IndexOptionsConflict`), and the name depends on who created the collection:
 Spring Data's auto-index creation names it `accountId`, V1's Mongoose names it
 `accountId_1`. Creating it blindly fails against either.
+
+## Phase 4 verification (2026-09-17)
+
+`./mvnw clean install` — BUILD SUCCESS across **fifteen** reactor projects.
+
+The full stack ran against V1's real Google Drive folder and, for the
+compatibility check, V1's own MongoDB Atlas cluster. Eureka listed
+`CHAT-SERVICE` and `PROPOSAL-SERVICE` alongside the six services from earlier
+phases.
+
+| Surface | Evidence |
+| --- | --- |
+| Event Advisor | `session_1789634648490_ziic06w` — V1's `session_<epoch>_<7 chars>` — with ten real sources from V1's corpus and a 3808-character answer |
+| History | A second turn on the same id produced a different theme ("The Archive Of Awesome" vs "The Great Odyssey Lounge") and six distinct activity names: the anti-repetition block engaged |
+| Session list | One message per session from the server-side `$slice` projection; the full session returned all four, roles `user`/`model` |
+| Chat PDF | 16613 bytes of Helvetica-only PDF for a Latin session |
+| Arabic PDF | The same export for an Arabic session embeds `AATJYO+Amiri-Regular` and `AAUGWI+Amiri-Bold` (CID TrueType, Identity-H, subsetted) with 2372 presentation-form codepoints |
+| Drive backup | `Chats/Session_2026-09-17T08-45/Chat_Backup_session_.pdf`, confirmed by walking the file's parents through the Drive API |
+| Proposals | Nine slides, `cover summary concept agenda activities venue catering investment closing`, nine pages at exactly 1280 × 720 |
+| Save vs download | `Dell Technologies_Proposal_2026-09-17.pdf` into the company's own Drive folder; the download attachment is the undated `Dell Technologies_Proposal.pdf` |
+| Event intake | A `Parity Test Co` folder with `Customer_Brief_2026-09-17T08-48-01.pdf`, and `briefCount: 1` for it on the next `/proposals/companies` |
+| Drive unauthenticated | `401` with `errorCode: DRIVE_NOT_AUTHENTICATED`, `authUrl: /api/v1/rag/sync/auth?force=true`, `error: "Google Drive not authenticated."` |
+| Re-authentication | The token returned to `tokendb.drivetokens` in V1's shape — `accountId`, access and refresh tokens, and an expiry `Long` exactly sixty minutes out |
+
+Every artifact written into V1's Drive during the run — the saved proposal, the
+`Parity Test Co` folder and the chat session folder — was deleted afterwards and
+re-checked as `404`. `/proposals/companies` returned to its original three
+companies once the sixty-second cache expired.
+
+### A V2 pointed at V1's database reads V1's sessions
+
+`MONGO_CHAT_DB=test` against V1's Atlas cluster started `chat-service` cleanly
+and listed all five of V1's sessions from July 2026, newest first. Reading one
+in full returned its four messages with sources intact and V1's own content
+("### Theme Concept: The Masterpiece Heist"); Mongo reported the same four.
+
+`chat-service` was returned to the local database immediately afterwards. A
+service left pointing at V1's cluster writes new sessions into real customer
+data.
+
+### The unique index is the thing that would have stopped it
+
+V1's Mongoose created `chatsessions`' unique index under MongoDB's default name,
+`sessionId_1`. Spring Data does not use the generated name: an unnamed
+`@Indexed` resolves to the dot-path, `sessionId`. MongoDB rejects a same-key
+index under a different name with error 85, and
+`MongoPersistentEntityIndexCreator` rethrows it as a
+`DataIntegrityViolationException` **during context refresh** — a startup abort,
+not a degraded request.
+
+So the one deployment mode `config-repo/chat-service.yml` advertises — "set
+`MONGO_CHAT_DB` to V1's database to reuse its existing sessions" — was the one
+mode that could not boot. No test could see it, because every test gets a fresh
+container where Spring creates the index itself.
+
+`@Indexed(unique = true, useGeneratedName = true)` lets the server name it, so
+V1's existing index is a silent no-op. `auto-index-creation` is now `false`, as
+in `storage-service`, and `ChatSessionIndexInitializer` creates the index when it
+is genuinely absent — matching on shape, never on name, exactly as
+`DriveTokenIndexInitializer` already did.
+
+This is the same trap documented for `storage-service` above. Note that
+`DriveTokenDocument.accountId` still lacks `useGeneratedName`; it is dormant only
+because that service disables auto-index creation.
+
+### PDFKit measures from the top, PDFBox from the bottom
+
+V1 drew the customer brief's footer at `page.height - 40`, which in PDFKit's
+top-left coordinate system means forty points from the *bottom*. PDFBox's origin
+is bottom-left, so the same expression put the footer forty points from the
+*top* — over the indigo header band on page one, and above the first line of
+content on every page after it.
+
+The test did not catch it because `PDFTextStripper` extracts text wherever it
+was drawn. Asserting that the footer *appears* passes against a footer printed
+in the wrong place. The assertion now walks the real `TextPosition` baselines;
+on the brief generated during this run they sit at 40.0 from the bottom on all
+four pages.
+
+### Arabic wraps before it is shaped, never after
+
+Shaping and reordering a whole string and *then* splitting it into lines puts
+the logically last words on the first line, so a paragraph reads bottom to top.
+Shaping each word separately and drawing the words left to right is the same
+error one level down: the letters join correctly and the phrase runs backwards.
+
+Both are avoided the same way — group logical words until the next would
+overflow, then shape that group as a unit. `MixedTextWriter.measure` and
+`writeLine` share one layout pass so the two can never disagree about where a
+line breaks.
+
+### `spring-boot:run` forks, so `pkill -f` misses the service
+
+Clearing `tokendb.drivetokens` and restarting `storage-service` appeared to
+leave Drive working, which looked like the re-auth path failing to engage. It
+was not: `pkill -f storage-service` had matched nothing. `spring-boot:run` forks
+a JVM whose command line carries the main class, not the `-pl` argument, so the
+original process was still serving Drive from an in-memory credential while
+Mongo held no token at all.
+
+Find the process holding the port and kill that:
+
+```bash
+netstat -ano | grep ":8086 .*LISTENING"
+```

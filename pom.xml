@@ -27,6 +27,7 @@
         <module>platform/bloom-bom</module>
         <module>platform/bloom-common</module>
         <module>platform/bloom-events</module>
+        <module>platform/bloom-pdf</module>
         <module>infrastructure/discovery-server</module>
         <module>infrastructure/config-server</module>
         <module>services/knowledge-service</module>
@@ -34,6 +35,8 @@
         <module>services/retrieval-service</module>
         <module>services/ingestion-service</module>
         <module>services/storage-service</module>
+        <module>services/chat-service</module>
+        <module>services/proposal-service</module>
         <module>infrastructure/api-gateway</module>
     </modules>
 

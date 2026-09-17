@@ -1,0 +1,13 @@
+spring:
+  application:
+    name: chat-service
+  config:
+    import: optional:configserver:${CONFIG_SERVER_URL:http://localhost:8888}
+  cache:
+    cache-names: chatCountForCompany
+    caffeine:
+      # V1: CACHE_TTL_CHAT_COUNT_MS = 60 s. Changes on any chat, which we cannot invalidate precisely.
+      spec: maximumSize=500,expireAfterWrite=60s
+
+server:
+  port: 8085
