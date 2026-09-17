@@ -20,7 +20,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 @SpringBootTest(properties = {
         "spring.config.import=",
         "eureka.client.enabled=false",
-        "spring.cloud.discovery.enabled=false"
+        "spring.cloud.discovery.enabled=false",
+        "bloom.auth.user=bloom",
+        "bloom.auth.password=correct horse battery staple",
+        "bloom.auth.internal-token=internal-secret"
 })
 class GatewayRouteDefinitionTest {
 
