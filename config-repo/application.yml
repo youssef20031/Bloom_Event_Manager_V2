@@ -1,7 +1,13 @@
 # Applied to every service that imports this Config Server.
 spring:
   kafka:
-    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    # Two listeners since Phase 5: kafka:9092 inside Compose, localhost:29092
+    # from the host. Host-run services get the host one by default.
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:29092}
+    template:
+      observation-enabled: true
+    listener:
+      observation-enabled: true
     producer:
       # ChunkBatchReady: up to 20 chunks x ~12 KB embeddings. Compress, and raise
       # the ceiling well above the 1 MB default. Keep in step with the broker's
@@ -13,6 +19,13 @@ spring:
       auto-offset-reset: earliest
       properties:
         max.partition.fetch.bytes: 5242880
+  # ── Security (Phase 5) ───────────────────────────────────────────────────
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          # The gateway publishes the RS256 public key; every service validates against it.
+          jwk-set-uri: ${JWT_JWKS_URI:http://localhost:8080/.well-known/jwks.json}
 
 eureka:
   client:
@@ -20,6 +33,12 @@ eureka:
       defaultZone: ${EUREKA_URL:http://localhost:8761/eureka/}
   instance:
     prefer-ip-address: true
+
+bloom:
+  security:
+    # Stamped by the gateway on forwarded requests; lets Kafka-triggered
+    # service-to-service calls (no user, no JWT) authenticate as SERVICE.
+    internal-token: ${INTERNAL_SERVICE_TOKEN}
 
 management:
   endpoints:
@@ -31,3 +50,31 @@ management:
       show-details: always
       probes:
         enabled: true
+  # ── Tracing (Phase 5) ────────────────────────────────────────────────────
+  tracing:
+    sampling:
+      probability: 1.0
+  zipkin:
+    tracing:
+      endpoint: ${ZIPKIN_ENDPOINT:http://localhost:9411/api/v2/spans}
+  info:
+    env:
+      enabled: true
+
+# ── Circuit breakers (Phase 5) ─────────────────────────────────────────────
+spring.cloud.openfeign.circuitbreaker.enabled: true
+
+resilience4j:
+  circuitbreaker:
+    configs:
+      default:
+        slidingWindowSize: 10
+        minimumNumberOfCalls: 5
+        failureRateThreshold: 50
+        waitDurationInOpenState: 30s
+        permittedNumberOfCallsInHalfOpenState: 3
+  timelimiter:
+    configs:
+      default:
+        # Gemini generation can take a while; the default 1s would trip on every call.
+        timeoutDuration: 20s

@@ -89,6 +89,16 @@ class GlobalExceptionHandlerTest {
         assertThat(problem.getStatus()).isEqualTo(409);
     }
 
+    @Test
+    void serviceUnavailableMapsTo503() {
+        ProblemDetail problem = handler.handleBloom(
+                new ServiceUnavailableException("retrieval-service is unavailable", new RuntimeException("open")));
+
+        assertThat(problem.getStatus()).isEqualTo(503);
+        assertThat(problem.getTitle()).isEqualTo("Service Temporarily Unavailable");
+        assertThat(problem.getProperties()).containsEntry("errorCode", "SERVICE_UNAVAILABLE");
+    }
+
     @SuppressWarnings("unused")
     private static final class Probe {
         void handle(String text) {

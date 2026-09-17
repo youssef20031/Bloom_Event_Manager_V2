@@ -9,6 +9,7 @@ public enum ErrorCode {
     EXTERNAL_SERVICE_ERROR(HttpStatus.BAD_GATEWAY, "External Service Error"),
     CONFLICT(HttpStatus.CONFLICT, "Conflict"),
     DRIVE_NOT_AUTHENTICATED(HttpStatus.UNAUTHORIZED, "Google Drive Not Authenticated"),
+    SERVICE_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "Service Temporarily Unavailable"),
     INTERNAL_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, "Internal Error");
 
     private final HttpStatus status;
