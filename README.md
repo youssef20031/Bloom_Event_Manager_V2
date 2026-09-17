@@ -1,94 +1,431 @@
 # Bloom Event Manager V2
 
-Spring microservices rebuild of the Bloom Event Manager. The V1 monolith
-(Express 5 + TypeScript) lives at `../Bloom_Event_Manager` and remains the
-reference implementation.
+Bloom Event Manager is a retrieval-augmented tool for an events agency: it keeps
+the agency's PDF library in a Google Drive folder, indexes it, answers planning
+questions against it (the Event Advisor), captures customer briefs, and produces
+slide-shaped client proposals. V2 is a Spring microservices rebuild of that
+system. The V1 monolith (Express 5 + TypeScript) lives at
+`../Bloom_Event_Manager` and remains the reference implementation — behavioural
+questions are settled by reading V1, and the phase verification log below
+records the parity runs made against V1's own Neo4j, MongoDB and Drive folder.
 
 - **Design spec:** `docs/superpowers/specs/2026-08-30-bloom-spring-microservices-design.md`
-- **Current phase:** Phase 3b — Write path: Google Drive sync
+- **Current phase:** Phase 5 — cutover and polish
 
-## Stack
+## Architecture
 
-Spring Boot 4.0.8 · Spring Cloud 2025.1.3 · Java 25 · Maven multi-module
+```mermaid
+flowchart LR
+  SPA[React SPA<br/>:3000 nginx / :5173 dev] -->|JWT| GW[api-gateway :8080]
+  GW --> CHAT[chat-service :8085]
+  GW --> PROP[proposal-service :8087]
+  GW --> RET[retrieval-service :8084]
+  GW --> STOR[storage-service :8086]
+  GW --> ING[ingestion-service :8083]
+  CHAT --> RET
+  PROP --> RET
+  PROP --> STOR
+  CHAT --> STOR
+  RET --> AI[ai-service :8081]
+  RET --> KNOW[knowledge-service :8082]
+  CHAT --> AI
+  PROP --> AI
+  PROP --> KNOW
+  ING --> AI
+  AI --> GEM[(Gemini)]
+  AI --> REDIS[(Redis)]
+  KNOW --> NEO[(Neo4j)]
+  CHAT --> MCHAT[(Mongo chatdb)]
+  STOR --> MTOK[(Mongo tokendb)]
+  STOR --> DRIVE[(Google Drive)]
+  STOR -.bloom.documents.discovered / deleted.-> K{{Kafka}}
+  K -.-> ING
+  ING -.bloom.chunks.batch-ready.-> K
+  K -.-> KNOW
+  KNOW -.bloom.documents.indexed.-> K
+  K -.-> STOR
+  EUREKA[discovery-server :8761] --- GW
+  CONFIG[config-server :8888] --- GW
+  ZIP[Zipkin :9411] --- GW
+```
 
-Spring Boot is pinned to 4.0.8 because Spring Cloud 2025.1.3 — the newest
-release train — supports exactly that version. Do not bump Boot independently.
+The gateway is the only public entry point. Ports below are the ones each
+service's own `config-repo/*.yml` sets; the Compose healthchecks in
+`deploy/docker-compose.yml` probe the same numbers.
 
-Boot 4.0 also split its test support into per-technology modules that
+| Module | Port | Owns | Purpose |
+|---|---|---|---|
+| `infrastructure/discovery-server` | 8761 | — | Eureka registry |
+| `infrastructure/config-server` | 8888 | `config-repo/` | Config Server, native (filesystem) backend |
+| `infrastructure/api-gateway` | 8080 | the JWT signing key | Routing, login, JWKS, internal-token stamping |
+| `services/ai-service` | 8081 | Redis | Gemini embedding and generation, cached |
+| `services/knowledge-service` | 8082 | Neo4j | Chunks, documents, Drive-file metadata, vector search |
+| `services/ingestion-service` | 8083 | — | PDF parsing, OCR, chunking, embedding |
+| `services/retrieval-service` | 8084 | — | Dual-search orchestration; owns no data |
+| `services/chat-service` | 8085 | Mongo `chatdb` | Event Advisor sessions, chat PDF export |
+| `services/storage-service` | 8086 | Mongo `tokendb`, Google Drive | Sole holder of the Drive OAuth token; Drive sync |
+| `services/proposal-service` | 8087 | — | Proposal generation, customer briefs, event intake |
+| `platform/bloom-bom` | — | — | Third-party and internal version pins |
+| `platform/bloom-common` | — | — | RFC 9457 problem details, `ErrorCode`, `BloomException` |
+| `platform/bloom-events` | — | — | Kafka topic names and event records |
+| `platform/bloom-pdf` | — | — | Shared PDF text layout, Arabic shaping, bundled Amiri fonts |
+| `platform/bloom-security` | — | — | Resource-server chain and `X-Internal-Token`, auto-configured |
+| `frontend/` | 3000 / 5173 | — | React 19 + Vite SPA; nginx in the `apps` profile |
+
+The four Kafka topics are declared in
+`platform/bloom-events/.../BloomTopics.java`: `bloom.documents.discovered`,
+`bloom.chunks.batch-ready`, `bloom.documents.indexed`, `bloom.documents.deleted`.
+Every service declares a `NewTopic` for the topics it *consumes* as well as the
+ones it produces — see the Phase 3a note below for why that is not tidy-uppable.
+
+## Stack and version pins
+
+| Pin | Version | Why this exact version |
+|---|---|---|
+| Spring Boot | 4.0.8 | Spring Cloud 2025.1.3 supports exactly this Boot version. Do not bump Boot independently. |
+| Spring Cloud | 2025.1.3 | Newest release train; sets the Boot baseline above. |
+| Java | 25 | `java.version` in the root `pom.xml`; images are `eclipse-temurin:25`. |
+| Spring AI | 2.0.1 | **Core modules only** — `spring-ai-google-genai` and `spring-ai-google-genai-embedding`. The Spring AI *starters* depend on Boot 4.1.1 and would break the 4.0.8 baseline, so `GeminiClientConfig` wires the beans by hand. |
+| PDFBox | 3.0.8 | Text extraction on ingest and every generated PDF (proposals, briefs, chat exports). |
+| ICU4J | 78.3 | Arabic shaping and bidi reordering for `bloom-pdf`. |
+| Tess4J | 5.20.0 | OCR for scanned PDFs with no text layer. |
+| `google-api-services-drive` | `v3-rev20260823-2.0.0` | Drive v3 client. |
+| `google-api-client` | 2.9.1 | OAuth plumbing behind it. |
+| `neo4j` image | `2026.06.0` | Matches what V1 runs. Neo4j upgrades the store format in place, so this tag is pinned, never `latest`. |
+| `mongo` image | `8.2` | MongoDB 8.0 refuses to start on Linux kernel 6.19+ (SERVER-121912); 8.2 is the first tag that starts on Docker Desktop's VM. |
+| `apache/kafka` image | `4.1.0` | Same major as the `kafka-clients` 4.1.2 that Spring Kafka 4.0.7 pulls in, and as the Testcontainers broker. |
+| `redis` image | `7-alpine` | Bounded at 512 MB with `allkeys-lru`. |
+| `openzipkin/zipkin` image | `3` | Trace collector for the `infra` profile. |
+
+Boot 4.0 split its test support into per-technology modules that
 `spring-boot-starter-test` no longer pulls in. A module needing
 `TestRestTemplate`, `@WebMvcTest` or `WebTestClient` declares
 `spring-boot-resttestclient` (plus `spring-boot-restclient`),
 `spring-boot-webmvc-test` or `spring-boot-webtestclient` test-scoped.
 
-## Modules
+## Running it
 
-| Module | Port | Purpose |
-|---|---|---|
-| `platform/bloom-bom` | — | Third-party and internal version pins |
-| `platform/bloom-common` | — | RFC 9457 problem detail error model |
-| `platform/bloom-events` | — | Kafka event contracts |
-| `infrastructure/discovery-server` | 8761 | Eureka registry |
-| `infrastructure/config-server` | 8888 | Config Server, native backend over `config-repo/` |
-| `infrastructure/api-gateway` | 8080 | Single public entry point |
-| `services/knowledge-service` | 8082 | Skeleton; owns Neo4j from Phase 1 |
-| `services/ai-service` | 8081 | Gemini embedding and generation, Redis-cached |
-| `services/retrieval-service` | 8084 | Dual-search orchestration; owns no data |
-| `services/ingestion-service` | 8083 | PDF parsing, OCR, chunking, embedding; publishes chunk batches |
-| `services/storage-service` | 8086 | Sole holder of Google Drive OAuth; Drive sync, folder conventions |
-
-## Running locally
-
-Start infrastructure:
+Prerequisites: Java 25, Docker, Node 22, and a `deploy/.env`:
 
 ```bash
-docker compose -f deploy/docker-compose.yml --profile infra up -d
+cp deploy/.env.example deploy/.env
+# then fill it in — see "Login and security" for what each variable is
 ```
 
-Build everything:
+`deploy/.env` is gitignored and `deploy/.env.example` holds placeholders only.
+On Windows use `mvnw.cmd` wherever `./mvnw` appears below.
+
+### Dev — infrastructure and platform in Docker, services from the IDE
 
 ```bash
+docker compose -f deploy/docker-compose.yml --profile infra --profile platform up -d
 ./mvnw clean install
 ```
 
-Start the platform, in this order, each from the repository root:
+Then run whichever services you are working on from the IDE or with
+`./mvnw -pl services/<name> spring-boot:run`. Their defaults already point at
+the published ports: Config Server on `localhost:8888`, Eureka on
+`localhost:8761`, Kafka on `localhost:29092` (the broker advertises a second
+`PLAINTEXT_HOST` listener for exactly this), Zipkin on `localhost:9411`. Give
+the IDE run configuration at least `INTERNAL_SERVICE_TOKEN`, plus whatever that
+service needs — `GEMINI_API_KEY` for `ai-service`, `NEO4J_*` for
+`knowledge-service`, and so on.
+
+The SPA runs against the gateway through Vite's proxy:
 
 ```bash
-./mvnw -pl infrastructure/discovery-server spring-boot:run
-./mvnw -pl infrastructure/config-server spring-boot:run
-./mvnw -pl services/knowledge-service spring-boot:run
-./mvnw -pl infrastructure/api-gateway spring-boot:run
+cd frontend && npm install && npm run dev   # http://localhost:5173
 ```
 
-The Config Server reads `config-repo/` from the repository root. `spring-boot:run`
-defaults its working directory to the module being run, so the config-server
-module pins `<workingDirectory>` to the multi-module root — without that, the
-native backend resolves `file:./config-repo` inside
+`frontend/vite.config.ts` proxies `/api` and `/.well-known` to
+`http://localhost:8080`, so the browser only ever talks to its own origin.
+
+### Full — everything in Docker
+
+```bash
+docker compose -f deploy/docker-compose.yml --profile infra --profile platform --profile apps up -d --build
+```
+
+Sixteen containers: five in `infra` (neo4j, mongodb, redis, kafka, zipkin),
+three in `platform` (config-server, discovery-server, api-gateway) and eight in
+`apps` (the seven services plus the nginx-served SPA). The SPA is on
+<http://localhost:3000>, and nginx proxies `/api` and `/.well-known` to
+`api-gateway:8080` on the Compose network — the browser never learns the
+gateway's address. Every Java container's healthcheck probes its own
+`/actuator/health/readiness`, and the `apps` services wait on
+`api-gateway: service_healthy`.
+
+`ingestion-service` builds from its own `services/ingestion-service/Dockerfile`
+rather than the shared `deploy/Dockerfile.service`, because Tess4J loads
+`libtesseract` from the system on Linux. Everything else builds from the shared
+one with a `MODULE_PATH` build arg.
+
+### Tests
+
+```bash
+./mvnw clean install
+cd frontend && npm install && npm test
+```
+
+Testcontainers-backed tests (Neo4j, Kafka, MongoDB) skip when the Docker daemon
+is down rather than failing, so a green build without Docker covers less than a
+green build with it. Start Docker before trusting the number.
+
+### Two things that look like misconfiguration and are not
+
+The Config Server reads `config-repo/` from the repository root.
+`spring-boot:run` defaults its working directory to the module being run, so the
+config-server module pins `<workingDirectory>` to the multi-module root —
+without that, the native backend resolves `file:./config-repo` inside
 `infrastructure/config-server/` and silently serves zero property sources.
 
-Verify the whole chain:
+A 503 from the gateway on the first attempt after startup is normal. Eureka
+caches its registry response for 30s and clients refresh on their own interval,
+so the gateway can take up to a minute to see a service. Retry before debugging;
+`curl http://localhost:8080/actuator/health` shows what the gateway has actually
+discovered.
+
+## Login and security
+
+One shared login, as V1 had. The gateway authenticates it and hands out an RS256
+JWT that every service verifies for itself.
 
 ```bash
-curl -s http://localhost:8080/api/v1/rag/ping
-# {"service":"knowledge-service","status":"ok"}
+curl -s -X POST http://localhost:8080/api/v1/auth/login \
+     -H 'Content-Type: application/json' \
+     -d '{"username": "'"$APP_AUTH_USER"'", "password": "'"$APP_AUTH_PASSWORD"'"}'
+# {"token":"eyJ…","tokenType":"Bearer","expiresIn":43200}
 ```
 
-A 503 on the first attempt is normal, not a misconfiguration. Eureka caches its
-registry response for 30s and clients refresh on their own interval, so the
-gateway can take up to a minute after startup to see `knowledge-service`. Retry
-before debugging; `curl http://localhost:8080/actuator/health` shows what the
-gateway has actually discovered.
+`expiresIn` is `bloom.auth.token-ttl` in seconds (default `PT12H`). The
+credentials are compared as fixed-length SHA-256 digests, so neither content nor
+length leaks through timing. The token carries `sub` and `scope: user` and
+nothing else — there are no per-user accounts or roles. Its issuer is
+`https://bloom-gateway`.
 
-## Configuration and secrets
+The public key is published as a JWKS:
 
-All configuration is served by the Config Server from `config-repo/`.
-Secrets are `${ENV_VAR}` placeholders resolved from the environment and are
-never committed. Copy `deploy/.env.example` to `deploy/.env` for local
-infrastructure credentials.
+```bash
+curl -s http://localhost:8080/.well-known/jwks.json
+```
 
-There is no authentication in Phase 0 — JWT and Spring Security arrive in
-Phase 5. The Config Server on 8888 serves `config-repo/` to any caller that
-can reach it, so keep real secrets in `deploy/.env` and out of `config-repo/`,
-and keep these ports on localhost.
+Services fetch it through `spring.security.oauth2.resourceserver.jwt.jwk-set-uri`
+(`JWT_JWKS_URI`, default `http://localhost:8080/.well-known/jwks.json`) and cache
+it. No key material is ever distributed through the Config Server.
+
+Anonymous at the gateway, from `GatewaySecurityConfig` — everything else needs a
+bearer token:
+
+| Path | Why |
+|---|---|
+| `/api/v1/auth/login` | issues the token |
+| `/.well-known/jwks.json` | public key, fetched before any token exists |
+| `/actuator/health`, `/actuator/health/**` | Compose healthchecks run without credentials |
+| `/api/rag/auth/google/callback` | Google's browser redirect cannot carry a Bearer token |
+| `/api/v1/rag/sync/auth/callback` | the versioned target of that redirect |
+
+Inside each service, `bloom-security`'s auto-configuration permits
+`/actuator/health` and `/actuator/health/**` plus anything listed under
+`bloom.security.permit-all` — only `storage-service` uses that, for
+`/api/v1/storage/auth/callback` — and requires authentication everywhere else.
+
+### `X-Internal-Token`
+
+The gateway is the trust boundary: it strips any inbound `X-Internal-Token` as a
+forgery and stamps the real one onto authenticated traffic it forwards, and each
+service's Feign interceptor stamps it on outbound service-to-service calls.
+`InternalTokenFilter` compares the header against `bloom.security.internal-token`
+with a constant-time digest comparison and, on a match, authenticates the request
+as the principal `internal-service` with `ROLE_SERVICE` — which is what lets a
+Kafka-triggered hop, where there is no user and therefore no JWT to forward,
+still reach a protected endpoint.
+
+### Known limitation: the caller's JWT is not forwarded between services
+
+`InternalTokenFeignInterceptor` copies the caller's `Authorization` header onto
+outbound Feign calls by reading `RequestContextHolder`. With
+`spring.cloud.openfeign.circuitbreaker.enabled=true`, Feign's whole invocation —
+its `RequestInterceptor`s included — runs inside the circuit breaker's supplier,
+which Resilience4j executes on one of its own threads.
+`RequestContextHolder` is a `ThreadLocal`, so it is empty there and the header is
+not copied.
+
+Nothing breaks: those calls still authenticate, as `internal-service` via
+`X-Internal-Token`, which is a field on the interceptor and survives the thread
+hop. What is lost is per-user attribution on service-to-service hops, which this
+system does not use — one shared login, and the JWT carries only `sub` and
+`scope: user`. Fixing it would mean a context-propagating executor on the
+breaker; nothing built so far depends on it.
+
+### Generating the keys
+
+Never commit any of these values. `deploy/.env.example` contains placeholders
+only, and the Config Server resolves `${ENV_VAR}` placeholders from the
+environment.
+
+```bash
+# RS256 signing key pair for the gateway
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out jwt-private.pem
+openssl rsa -pubout -in jwt-private.pem -out jwt-public.pem
+
+# Shared service-to-service token
+openssl rand -base64 32
+
+# Login password
+openssl rand -base64 24
+```
+
+Set `JWT_PRIVATE_KEY_PEM` and `JWT_PUBLIC_KEY_PEM` to the *contents* of those two
+files. Both or neither — `JwtKeys` refuses a half-configured pair. Leave both
+blank and the gateway generates an ephemeral 2048-bit pair at startup and logs a
+warning: every token dies with the process, which is fine for development and
+never for anything else.
+
+### Environment variables
+
+Gateway and platform:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `APP_AUTH_USER` | — (required) | The single login username |
+| `APP_AUTH_PASSWORD` | — (required) | The single login password |
+| `INTERNAL_SERVICE_TOKEN` | — (required, every service) | Shared `X-Internal-Token` value |
+| `JWT_PRIVATE_KEY_PEM` | blank | RS256 private key PEM; blank ⇒ ephemeral key |
+| `JWT_PUBLIC_KEY_PEM` | blank | Matching public key PEM |
+| `JWT_TTL` | `PT12H` | Token lifetime |
+| `JWT_JWKS_URI` | `http://localhost:8080/.well-known/jwks.json` | Where services fetch the public key |
+| `CONFIG_SERVER_URL` | `http://localhost:8888` | Config Server for `spring.config.import` |
+| `CONFIG_REPO` | `file:./config-repo` | Config Server's native search location |
+| `EUREKA_URL` | `http://localhost:8761/eureka/` | Registry |
+| `EUREKA_HOSTNAME` | `localhost` | The registry's own advertised hostname |
+| `KAFKA_BOOTSTRAP_SERVERS` | `localhost:29092` | `kafka:9092` inside Compose |
+| `ZIPKIN_ENDPOINT` | `http://localhost:9411/api/v2/spans` | Span collector |
+
+Data stores and external services:
+
+| Variable | Default | Used by |
+|---|---|---|
+| `NEO4J_URI` | `bolt://localhost:7687` | knowledge-service |
+| `NEO4J_USER` / `NEO4J_PASSWORD` | `neo4j` / `password` | knowledge-service, and the Compose `neo4j` container |
+| `MONGO_URI` | `mongodb://localhost:27017` | chat-service, storage-service |
+| `MONGO_CHAT_DB` | `chatdb` | chat-service — set to V1's database to reuse its sessions |
+| `MONGO_TOKEN_DB` | `tokendb` | storage-service — set to V1's database to reuse its Drive token |
+| `REDIS_URL` | `redis://localhost:6379` | ai-service |
+| `GEMINI_API_KEY` | — (required) | ai-service |
+| `GEMINI_MODEL` | `gemini-3-flash-preview` | ai-service |
+| `GEMINI_FALLBACK_MODELS` | `gemini-2.5-flash,gemini-2.0-flash-001` | ai-service |
+| `GEMINI_EMBEDDING_MODEL` | `gemini-embedding-001` | ai-service — changing it changes every vector and every cache key |
+| `CACHE_KEY_PREFIX` | `bloom:` | ai-service |
+| `RAG_TOP_K` | `15` | retrieval-service, chat-service |
+| `PDF_DIRECTORY` | `./ISM_PDF` | ingestion-service's local ingest path. In Compose it names the **host** directory to mount (default `./pdfs`); the container always reads `/data/pdfs` |
+| `CHUNK_SIZE` / `CHUNK_OVERLAP` | `1000` / `200` | ingestion-service |
+| `TESSDATA_PATH` | blank | ingestion-service; blank ⇒ the `eng.traineddata` bundled in the jar |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | blank | storage-service |
+| `GOOGLE_CREDENTIALS_PATH` | `./secrets/client_secret.json` | storage-service, if the pair above is not set |
+| `GOOGLE_OAUTH_REDIRECT_URI` | `http://localhost:8080/api/rag/auth/google/callback` | storage-service — must match the Console |
+| `GOOGLE_DRIVE_FOLDER_ID` | blank | storage-service — the folder to sync |
+| `DRIVE_SYNC_INTERVAL_MS` | `300000` | storage-service auto-sync poll (minimum 10000) |
+| `FRONTEND_URL` | `http://localhost:5173` | Where storage-service sends the browser after consent (`http://localhost:3000` in Compose) |
+
+## Google Drive
+
+`storage-service` is the only holder of the Drive OAuth token. Everything else
+reaches Drive through it.
+
+**Register the redirect URI.** In the Google Cloud Console, the OAuth client's
+authorized redirect URI must be:
+
+```
+http://localhost:8080/api/rag/auth/google/callback
+```
+
+That is V1's path, kept deliberately — changing it is an external console change.
+The gateway answers on it and 307-redirects to
+`/api/v1/rag/sync/auth/callback` with the query string (and therefore the
+authorization `code`) intact, which routes to storage-service's
+`/api/v1/storage/auth/callback`. Both paths are anonymous, on both sides, because
+a browser navigation cannot carry a Bearer token.
+
+The consent endpoint is pinned to `https://accounts.google.com/o/oauth2/v2/auth`.
+The Java client's default is the legacy `/o/oauth2/auth`, which answers
+`Error 400: invalid_scope` *after* sign-in against this client. See the Phase 3b
+note below.
+
+**Authenticate from the SPA.** Settings → *Connect Google Drive*. The button
+follows the `authUrl` the SPA already has from `GET /api/v1/rag/sync/status`, or
+fetches one from `GET /api/v1/rag/sync/auth?force=true`, which answers
+`{status, message, authUrl}` rather than redirecting. After consent,
+storage-service exchanges the code, writes the token to Mongo
+(`MONGO_TOKEN_DB`, collection `drivetokens`, in V1's document shape), starts the
+auto-sync poll and sends the browser to `FRONTEND_URL/?auth=success` — or
+`?auth=error` if the exchange failed. The Settings badge flips to *Connected*
+within one 30-second status poll.
+
+**What the poll does.** `AutoSyncScheduler` runs `DriveSyncService.autoSync`
+immediately and then every `DRIVE_SYNC_INTERVAL_MS` (default five minutes). It
+starts on a successful callback, and on startup when a token is already stored.
+Each run lists every PDF under `GOOGLE_DRIVE_FOLDER_ID` recursively and diffs it
+against the `driveFileId → modifiedTime` map that knowledge-service keeps on its
+`Document` nodes:
+
+- an id that is new, or whose `modifiedTime` differs, publishes
+  `bloom.documents.discovered` → ingestion-service downloads, chunks, embeds and
+  publishes `bloom.chunks.batch-ready` → knowledge-service indexes and publishes
+  `bloom.documents.indexed`;
+- an id Drive no longer returns publishes `bloom.documents.deleted`, and
+  knowledge-service removes the document and its chunks.
+
+The recorded `modifiedTime` is only updated when `bloom.documents.indexed` comes
+back, so a file that failed to ingest is picked up again on the next poll rather
+than being silently marked done. `POST /api/v1/rag/sync` runs the same diff on
+demand; `GET /api/v1/rag/sync/check` reports it without acting.
+
+## Reference trace
+
+Every service reports to Zipkin with `management.tracing.sampling.probability: 1.0`
+— all spans, which is right for a demo stack and not for production.
+
+1. Bring up the full stack and log in at <http://localhost:3000>.
+2. Ask the Event Advisor anything.
+3. Open <http://localhost:9411> and query for service `api-gateway`.
+
+The trace to look for spans gateway → chat → retrieval → ai / knowledge → ai.
+A Drive-triggered ingest should produce a second trace that crosses Kafka:
+`spring.kafka.template.observation-enabled` and
+`spring.kafka.listener.observation-enabled` are both set in
+`config-repo/application.yml`, so the producer's context rides the message
+headers to the consumer. Both traces are checks for the live walkthrough, not
+claims already made.
+
+A screenshot of the chat trace belongs at `docs/images/reference-trace.png`. It
+is captured during that walkthrough, from a real run; the file is not in the
+repository yet.
+
+## Spec deviations log
+
+Every place the build disagrees with the design spec or the phase plan, and why.
+
+| Spec said | Built | Why |
+|---|---|---|
+| Public key distributed via Config Server | Gateway serves `/.well-known/jwks.json`; Config Server distributes the URL | Standard JWKS; no key material in config |
+| Services trust the gateway | Services validate the JWT *and* accept `X-Internal-Token` from the gateway / peers | Kafka-triggered hops have no user JWT |
+| `GET /sync/auth?force=true` redirects | Returns `{status, authUrl}` | A browser navigation cannot carry a Bearer token |
+| `DELETE /documents/{source}` | `DELETE /documents?source=` | Sources contain slashes |
+| — | `GET /drive-files/{id}` added | Deletion needs the source for a Drive id |
+| Tess4J for Drive OCR | Tess4J for both ingest paths | One OCR strategy; V1's local path used Gemini Vision |
+| `sanitizeFolderName` replaces whitespace | Keeps whitespace | V1's regex never matched; existing folders have spaces |
+| Batches "≤20 chunks" | Enforced in the `ChunkBatchReady` constructor | Kafka 1 MB default |
+| Port V1's `embeddingService.ts` — the SPA embeds the query in the browser | Deleted. `QueryForm` posts `{query, useAI}`; `RetrievalService` falls back to `embed(List.of(query))` when `queryEmbedding` is null | Vite inlines `VITE_GEMINI_API_KEY` into the bundle, shipping the Gemini key to every visitor — and ai-service already owns embedding |
+| JWT issuer `bloom-gateway` | `https://bloom-gateway` | `Jwt#getIssuer()` returns `java.net.URL` and throws for a non-absolute-URI issuer |
+| Add `X-Internal-Token` headers to every `@WebMvcTest` | Slices unchanged; two properties added to the `@SpringBootTest` classes only | Boot 4's `@WebMvcTest` slice applies no `SecurityAutoConfiguration`, so the library cannot 401 it; the real failure was `@NotBlank internalToken` failing to bind under `spring.config.import=` |
+| `@ConditionalOnClass` on `bloom-security`'s Feign interceptor `@Bean` method | The bean lives in a nested `@Configuration` that carries the condition | Spring reflects over method signatures before evaluating the condition, and the return type implements `feign.RequestInterceptor` — knowledge-service, which has no Feign, died with `ClassNotFoundException` |
+| — | `frontend/.dockerignore` added | The image's `COPY . .` runs after `npm ci`; without it the host's `node_modules` would overwrite the container's |
+| Login accepts `?next=` when it starts with `/` | `safeNextPath` rejects `//` and `/\`, then re-resolves against `window.location.origin` | A leading-slash check alone accepts `//evil.example`, which browsers resolve off-origin |
+
+## Phase verification log
+
+What was actually run at the end of each phase, against V1's real data. Each
+entry is written after the live walkthrough, not from the plan.
 
 ## Phase 1 verification (2026-09-15)
 
@@ -526,4 +863,51 @@ Find the process holding the port and kill that:
 
 ```bash
 netstat -ano | grep ":8086 .*LISTENING"
+```
+
+## Repository layout
+
+```
+.
+├── config-repo/                  Config Server's native backend — application.yml plus one file per service
+├── deploy/
+│   ├── .env.example              Variable names and placeholders. Copy to deploy/.env (gitignored).
+│   ├── Dockerfile.service        Shared multi-stage build, parameterised by MODULE_PATH
+│   └── docker-compose.yml        Profiles: infra, platform, apps
+├── docs/
+│   └── superpowers/
+│       ├── plans/                Per-phase implementation plans
+│       └── specs/                2026-08-30-bloom-spring-microservices-design.md
+├── frontend/                     React 19 + Vite SPA
+│   ├── Dockerfile                node:22 build → nginx:alpine
+│   ├── nginx.conf                SPA deep links; proxies /api and /.well-known to api-gateway:8080
+│   ├── .dockerignore             Keeps the host's node_modules and dist out of the image
+│   ├── vite.config.ts            Dev server on 5173, same proxy targets on localhost:8080
+│   └── src/
+│       ├── components/           Login, landing, intake, advisor, proposals, settings
+│       ├── services/             apiFetch (JWT + 401 handling), auth, safeNext
+│       ├── hooks/                useDriveAuthStatus, useTheme
+│       ├── styles/               Design tokens, global, components, animations, responsive
+│       └── utils/
+├── infrastructure/
+│   ├── api-gateway/              8080 — routes, /api/v1/auth/login, JWKS, X-Internal-Token stamping,
+│   │                             and the legacy Google OAuth callback shim
+│   ├── config-server/            8888 — native backend over config-repo/
+│   └── discovery-server/         8761 — Eureka
+├── platform/
+│   ├── bloom-bom/                Third-party and internal version pins
+│   ├── bloom-common/             RFC 9457 problem details, ErrorCode, BloomException, JsonExtractor
+│   ├── bloom-events/             BloomTopics and the four event records
+│   ├── bloom-pdf/                MixedTextWriter, ArabicText, ScriptRuns, bundled Amiri fonts
+│   └── bloom-security/           Resource-server chain, InternalTokenFilter, Feign interceptor
+├── services/
+│   ├── ai-service/               8081
+│   ├── knowledge-service/        8082
+│   ├── ingestion-service/        8083 — own Dockerfile; needs system Tesseract
+│   ├── retrieval-service/        8084
+│   ├── chat-service/             8085
+│   ├── storage-service/          8086
+│   └── proposal-service/         8087
+├── mvnw, mvnw.cmd, .mvn/
+└── pom.xml                       Maven multi-module root — fifteen modules
 ```
