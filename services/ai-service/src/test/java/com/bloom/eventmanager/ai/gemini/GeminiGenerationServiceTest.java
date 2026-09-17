@@ -11,6 +11,11 @@ import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.google.genai.GoogleGenAiChatOptions;
+import org.springframework.cloud.circuitbreaker.resilience4j.Resilience4JCircuitBreakerFactory;
+import org.springframework.cloud.circuitbreaker.resilience4j.Resilience4JConfigurationProperties;
+
+import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
+import io.github.resilience4j.timelimiter.TimeLimiterRegistry;
 
 import com.bloom.eventmanager.ai.config.AiProperties;
 import com.bloom.eventmanager.ai.domain.GenerationOptions;
@@ -30,7 +35,13 @@ class GeminiGenerationServiceTest {
     private final ChatModel chatModel = mock(ChatModel.class);
     private final AiProperties properties = new AiProperties("key", "gemini-primary",
             List.of("gemini-fallback-1", "gemini-fallback-2"), "gemini-embedding-001", 3072, 20, "bloom:");
-    private final GeminiGenerationService service = new GeminiGenerationService(chatModel, properties);
+    // A real factory with default settings: the model-chain behaviour under test
+    // depends on the breaker passing the SDK's own exception through, and a stub
+    // would not exercise that. Defaults never open within a single test.
+    private final Resilience4JCircuitBreakerFactory breakers = new Resilience4JCircuitBreakerFactory(
+            CircuitBreakerRegistry.ofDefaults(), TimeLimiterRegistry.ofDefaults(), null,
+            new Resilience4JConfigurationProperties());
+    private final GeminiGenerationService service = new GeminiGenerationService(chatModel, breakers, properties);
 
     @Test
     void separatesThoughtPartsFromAnswerParts() {

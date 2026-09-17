@@ -7,7 +7,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import com.bloom.eventmanager.ingestion.client.dto.EmbedBatchRequest;
 import com.bloom.eventmanager.ingestion.client.dto.EmbedBatchResponse;
 
-@FeignClient(name = "ai-service")
+@FeignClient(name = "ai-service", fallback = AiClientFallback.class)
 public interface AiClient {
 
     @PostMapping("/api/v1/ai/embed/batch")

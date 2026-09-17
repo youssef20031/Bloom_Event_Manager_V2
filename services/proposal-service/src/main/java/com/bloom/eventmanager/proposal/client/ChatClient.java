@@ -9,7 +9,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import com.bloom.eventmanager.proposal.client.dto.ChatSession;
 import com.bloom.eventmanager.proposal.client.dto.CountResponse;
 
-@FeignClient(name = "chat-service")
+@FeignClient(name = "chat-service", fallback = ChatClientFallback.class)
 public interface ChatClient {
 
     @GetMapping("/api/v1/chat/sessions/search")

@@ -13,6 +13,7 @@ import com.google.api.services.drive.model.File;
 import com.google.api.services.drive.model.FileList;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.cloud.client.circuitbreaker.CircuitBreakerFactory;
 import org.springframework.stereotype.Component;
 
 import com.bloom.eventmanager.common.error.ExternalServiceException;
@@ -27,11 +28,13 @@ public class GoogleDriveClient implements DriveClient {
     private static final String FILE_FIELDS = "files(id, name, mimeType, modifiedTime, size)";
 
     private final DriveAuthManager auth;
+    private final CircuitBreakerFactory<?, ?> breakers;
     private final NetHttpTransport transport = new NetHttpTransport();
     private final GsonFactory jsonFactory = GsonFactory.getDefaultInstance();
 
-    public GoogleDriveClient(DriveAuthManager auth) {
+    public GoogleDriveClient(DriveAuthManager auth, CircuitBreakerFactory<?, ?> breakers) {
         this.auth = auth;
+        this.breakers = breakers;
     }
 
     private Drive drive() {
@@ -145,13 +148,24 @@ public class GoogleDriveClient implements DriveClient {
     }
 
     private <T> T call(String operation, DriveCall<T> call) {
-        try {
-            return call.run();
-        }
-        catch (IOException ex) {
-            auth.handleAuthError(ex);
-            throw new ExternalServiceException("Google Drive " + operation + " failed", ex);
-        }
+        return breakers.create("drive").run(
+                () -> {
+                    try {
+                        return call.run();
+                    }
+                    catch (IOException ex) {
+                        auth.handleAuthError(ex);
+                        throw new ExternalServiceException("Google Drive " + operation + " failed", ex);
+                    }
+                },
+                failure -> {
+                    // A failure that already carries our own diagnosis passes straight through;
+                    // anything else means the breaker itself rejected the call.
+                    if (failure instanceof ExternalServiceException external) {
+                        throw external;
+                    }
+                    throw new ExternalServiceException("Google Drive " + operation + " unavailable (circuit open)", failure);
+                });
     }
 
     @FunctionalInterface

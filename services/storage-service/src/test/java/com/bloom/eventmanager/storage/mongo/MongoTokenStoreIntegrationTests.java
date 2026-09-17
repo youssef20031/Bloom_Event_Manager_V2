@@ -20,6 +20,8 @@ import static org.assertj.core.api.Assertions.assertThat;
         "spring.config.import=",
         "eureka.client.enabled=false",
         "spring.cloud.discovery.enabled=false",
+        "bloom.security.internal-token=test-token",
+        "spring.security.oauth2.resourceserver.jwt.jwk-set-uri=http://localhost:1/jwks",
         "spring.kafka.listener.auto-startup=false",
         // Off in production too: it would make MongoDB a hard startup
         // dependency. DriveTokenIndexInitializer owns the index instead.

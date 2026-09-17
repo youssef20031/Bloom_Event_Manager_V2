@@ -9,7 +9,7 @@ import com.bloom.eventmanager.retrieval.client.dto.EmbedBatchResponse;
 import com.bloom.eventmanager.retrieval.client.dto.GenerateRequest;
 import com.bloom.eventmanager.retrieval.client.dto.GenerateResponse;
 
-@FeignClient(name = "ai-service")
+@FeignClient(name = "ai-service", fallback = AiClientFallback.class)
 public interface AiClient {
 
     @PostMapping("/api/v1/ai/embed/batch")

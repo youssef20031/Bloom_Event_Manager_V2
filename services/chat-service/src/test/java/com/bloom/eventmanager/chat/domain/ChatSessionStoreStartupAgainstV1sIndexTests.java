@@ -45,6 +45,8 @@ import com.mongodb.client.model.IndexOptions;
         "spring.config.import=",
         "eureka.client.enabled=false",
         "spring.cloud.discovery.enabled=false",
+        "bloom.security.internal-token=test-token",
+        "spring.security.oauth2.resourceserver.jwt.jwk-set-uri=http://localhost:1/jwks",
         // Forced on deliberately: this is what actually breaks under the old,
         // unnamed @Indexed(unique = true). chat-service.yml turns this off in
         // production (ChatSessionIndexInitializer builds the index instead),

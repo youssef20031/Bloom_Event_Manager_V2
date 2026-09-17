@@ -9,7 +9,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import com.bloom.eventmanager.retrieval.client.dto.ChunkMatch;
 import com.bloom.eventmanager.retrieval.client.dto.ChunkSearchRequest;
 
-@FeignClient(name = "knowledge-service")
+@FeignClient(name = "knowledge-service", fallback = KnowledgeClientFallback.class)
 public interface KnowledgeClient {
 
     @PostMapping("/api/v1/chunks/search")

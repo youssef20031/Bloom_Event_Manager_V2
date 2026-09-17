@@ -7,7 +7,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import com.bloom.eventmanager.chat.client.dto.ChatBackupRequest;
 import com.bloom.eventmanager.chat.client.dto.ChatBackupResponse;
 
-@FeignClient(name = "storage-service")
+@FeignClient(name = "storage-service", fallback = StorageClientFallback.class)
 public interface StorageClient {
 
     @PostMapping("/api/v1/storage/chat-backups")
