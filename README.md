@@ -240,22 +240,25 @@ as the principal `internal-service` with `ROLE_SERVICE` — which is what lets a
 Kafka-triggered hop, where there is no user and therefore no JWT to forward,
 still reach a protected endpoint.
 
-### Known limitation: the caller's JWT is not forwarded between services
+### Two credentials, and which one is used when
 
-`InternalTokenFeignInterceptor` copies the caller's `Authorization` header onto
-outbound Feign calls by reading `RequestContextHolder`. With
-`spring.cloud.openfeign.circuitbreaker.enabled=true`, Feign's whole invocation —
-its `RequestInterceptor`s included — runs inside the circuit breaker's supplier,
-which Resilience4j executes on one of its own threads.
-`RequestContextHolder` is a `ThreadLocal`, so it is empty there and the header is
-not copied.
+Every service accepts either credential, and a service-to-service call normally
+carries both:
 
-Nothing breaks: those calls still authenticate, as `internal-service` via
-`X-Internal-Token`, which is a field on the interceptor and survives the thread
-hop. What is lost is per-user attribution on service-to-service hops, which this
-system does not use — one shared login, and the JWT carries only `sub` and
-`scope: user`. Fixing it would mean a context-propagating executor on the
-breaker; nothing built so far depends on it.
+- **The caller's JWT.** `InternalTokenFeignInterceptor` copies the incoming
+  `Authorization` header onto outbound Feign calls, so the original user's token
+  travels the whole chain and each hop validates it against the gateway's JWKS.
+- **`X-Internal-Token`.** A machine identity for hops that have no user at all —
+  a Kafka-triggered call such as storage reacting to `bloom.documents.indexed`
+  has no request to copy a header from.
+
+Verified rather than assumed: restarting `retrieval-service` with a deliberately
+mismatched `INTERNAL_SERVICE_TOKEN` and then asking the Event Advisor a question
+still succeeds, which is only possible if the forwarded JWT is what authenticates
+the `chat -> retrieval` hop. The concern that `RequestContextHolder`, being a
+`ThreadLocal`, would be empty inside the circuit breaker's supplier does not
+apply here: with no bulkhead configured, Spring Cloud CircuitBreaker's
+Resilience4j implementation runs the supplier on the calling thread.
 
 ### Generating the keys
 

@@ -20,6 +20,7 @@ import com.bloom.eventmanager.chat.client.dto.GenerateRequest;
 import com.bloom.eventmanager.chat.client.dto.GenerateResponse;
 import com.bloom.eventmanager.chat.client.dto.RetrieveRequest;
 import com.bloom.eventmanager.chat.config.ChatProperties;
+import com.bloom.eventmanager.common.error.BloomException;
 import com.bloom.eventmanager.common.error.ExternalServiceException;
 
 /**
@@ -74,6 +75,12 @@ public class ChatWithDocumentsUseCase {
             generated = ai.generate(new GenerateRequest(buildPrompt(message, context, history),
                     new GenerateRequest.Config(true, 1.2, null)));
         }
+        catch (BloomException ex) {
+            // A peer's fallback already classified this -- notably
+            // ServiceUnavailableException (503) when a circuit is open. Re-wrapping
+            // would downgrade it to a 502 and tell the browser the wrong thing.
+            throw ex;
+        }
         catch (RuntimeException ex) {
             throw new ExternalServiceException("Event Advisor generation failed", ex);
         }
@@ -124,6 +131,9 @@ public class ChatWithDocumentsUseCase {
         try {
             List<ChunkMatch> chunks = retrieval.retrieve(new RetrieveRequest(query, topK, false)).chunks();
             return chunks == null ? List.of() : chunks;
+        }
+        catch (BloomException ex) {
+            throw ex;
         }
         catch (RuntimeException ex) {
             throw new ExternalServiceException("Context retrieval failed", ex);
