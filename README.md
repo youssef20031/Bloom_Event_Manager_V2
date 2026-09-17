@@ -868,6 +868,96 @@ Find the process holding the port and kill that:
 netstat -ano | grep ":8086 .*LISTENING"
 ```
 
+## Phase 5 verification (2026-09-17)
+
+`./mvnw clean install` — BUILD SUCCESS across **sixteen** reactor projects:
+**355 tests, 0 failures, 0 errors, 0 skipped**. The phase began at 293 tests
+with 30 skipped; those 30 were Docker-dependent and had been skipping silently,
+so the count now means something.
+
+Verified with infra in Docker and every Java process running from the built
+jars. Eight Eureka registrations, all `UP`; Zipkin knew all nine services.
+
+| Criterion | Evidence |
+| --- | --- |
+| Anonymous request rejected | `GET /api/v1/rag/ping` → `401`, `application/problem+json`, `errorCode: UNAUTHENTICATED` |
+| Authenticated request | The same path with a Bearer token → `200 {"service":"knowledge-service","status":"ok"}` |
+| Tampered token | One character appended to the signature → `401` |
+| **Forged internal token** | `X-Internal-Token: forged-value` from outside → `401`. The gateway strips the header on the way in, so the edge cannot impersonate a service |
+| Login | `POST /api/v1/auth/login` → RS256, `kid` matching the JWKS entry, `iss=https://bloom-gateway`, `sub=bloom`, `scope=user`, `expiresIn=43200` |
+| Bad credentials | `401` `Invalid credentials`, constant-time compared |
+| JWKS | One RSA key, `use=sig`, `kid` present, and no `d`/`p`/`q`/`dp`/`dq`/`qi` — checked explicitly |
+| Reference trace | One trace, **48 spans, 6 services**: gateway → chat → retrieval → ai (`embed/batch`) and knowledge (`chunks/search`) → ai (`generate`). Redis appears too; the embedding cache is traced. `circuit-breaker` spans wrap every Feign hop and both Gemini calls. Captured in `docs/images/reference-trace.png` |
+| Kafka trace | A single trace across two topics and three services: `ingestion bloom.chunks.batch-ready send` → `knowledge process` → `knowledge bloom.documents.indexed send` → `storage process` |
+| Async ingest | `POST /api/v1/rag/ingest` → `202 {jobId}`; polling → `COMPLETED`, `chunkCount: 1`, `ocrUsed: false` |
+| Breaker opens | With `ai-service` stopped, calls 1–3 took ~2.1 s (real attempts), calls 4+ ~0.03 s |
+| Breaker response | `503` `SERVICE_UNAVAILABLE` — only after fixing a masking bug, see below |
+| Breaker recovery | Automatic ~60 s after `ai-service` returned, with no restart. Longer than the 30 s `waitDurationInOpenState` because two breakers recover in sequence: retrieval→ai, then chat→retrieval |
+| Readiness groups | knowledge `neo4j`, chat `mongo`, storage `mongo`, ai none (Redis deliberately excluded). Kafka and Eureka appear in no group |
+| Build info | `/actuator/info` → `artifact=knowledge-service, version=0.0.1-SNAPSHOT` |
+| SPA guard | `/intake` while logged out → `/login?next=%2Fintake` |
+| SPA authenticated | App shell renders; `/api/v1/rag/chat/sessions` and `/api/v1/rag/sync/status` both `200` through the Vite proxy |
+| SPA 401 handling | An invalid token → `apiFetch` clears it and redirects to `/login?next=%2Fadvisor` |
+
+### Four defects that only running the system exposed
+
+**chat-service masked its own 503.** `RetrievalClientFallback` throws
+`ServiceUnavailableException` so the browser sees a clean 503, but
+`ChatWithDocumentsUseCase` caught `RuntimeException` and re-wrapped everything
+as `ExternalServiceException` — a 502. Every unit test passed, because none of
+them exercised a *peer* failing.
+
+**The test suite was not hermetic.** Each module's `application.yml` declares
+`spring.config.import=optional:configserver:…`, and setting
+`spring.config.import=` in a `@SpringBootTest` does **not** suppress it. Tests
+silently reached whatever Config Server happened to be on `:8888` and took
+config-repo's values. Starting the stack for this verification broke
+previously-green `@WebMvcTest` slices, and it is also why a Kafka test's
+`auto-offset-reset` flipped between runs. Every module now pins
+`spring.cloud.config.enabled=false` in its test resources.
+
+**A Kafka test had been passing by not running.** `KafkaWiringIntegrationTests`
+published before the listener group resolved its first position; with Kafka's
+default `auto.offset.reset=latest` the consumer seeks past the record. Roughly a
+1-in-5 pass rate — invisible because Docker was down and
+`@Testcontainers(disabledWithoutDocker = true)` skips silently. The merge-base
+commit fails identically. Fixed by waiting for partition ownership, not by
+raising the timeout.
+
+**`@ConditionalOnClass` on a `@Bean` method does not work** when the method's
+return type implements the optional class: Spring reflects over method
+signatures before evaluating the condition. knowledge-service, the only service
+with no Feign, died with `ClassNotFoundException: feign.RequestInterceptor`.
+bloom-security's own tests could not catch it — its test classpath has the
+optional dependency.
+
+### Two behaviours worth knowing
+
+`/actuator/info` now requires authentication. `bloom-security` opens only
+`/actuator/health`, `/actuator/health/**` and each service's permit-all paths,
+so an anonymous `/actuator/info` returns `401`. Health probes stay open.
+
+`/actuator/health` no longer shows details anonymously. It is `when-authorized`:
+with `always`, an unauthenticated caller on the published gateway port received
+the whole Eureka topology, container IPs and ports, and host disk paths.
+Anonymous callers get `{"status":"UP"}` and a `200`, which is all the Compose
+probes read.
+
+### Not verified
+
+- **The full Compose stack.** All eleven images build, and
+  `docker compose config` renders sixteen services with every healthcheck port
+  matching its own service. The containers were not brought up: the Config
+  Server bind-mounts `config-repo`, and this machine's Docker Desktop File
+  Sharing does not include the drive. Phase 6 removes the mount by moving the
+  Config Server to a git backend.
+- **The login form's own submit handler.** The `POST /api/v1/auth/login` round
+  trip and the authenticated app were both verified, the latter by seeding the
+  `bloom.token` value that a successful login writes.
+- **Google Drive OAuth.** Completing the consent flow needs a real Google grant.
+  The Kafka-crossing trace was obtained through the local PDF ingest path, which
+  drives the same topics and listeners.
+
 ## Repository layout
 
 ```
