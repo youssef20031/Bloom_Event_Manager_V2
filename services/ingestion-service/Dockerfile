@@ -9,7 +9,11 @@ COPY .mvn .mvn
 COPY platform platform
 COPY infrastructure infrastructure
 COPY services services
-RUN mvn -q -pl ${MODULE_PATH} -am -DskipTests package
+# Cache mount: without it each of the eleven service images re-downloads the whole
+# dependency tree independently. That is slow, and the resulting burst of parallel
+# downloads is what exhausted Docker's DNS resolver and failed the first full build
+# with "Temporary failure in name resolution". The cache is shared across images.
+RUN --mount=type=cache,target=/root/.m2/repository,sharing=locked mvn -q -pl ${MODULE_PATH} -am -DskipTests package
 
 FROM eclipse-temurin:25-jre
 ARG MODULE_PATH
