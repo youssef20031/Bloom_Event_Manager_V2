@@ -2,6 +2,7 @@ import { FormEvent, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { login } from "../services/auth";
+import { safeNextPath } from "../services/safeNext";
 import "./LoginPage.css";
 
 export default function LoginPage() {
@@ -18,8 +19,7 @@ export default function LoginPage() {
     setError(null);
     try {
       await login(username, password);
-      const next = params.get("next");
-      navigate(next && next.startsWith("/") ? next : "/intake", { replace: true });
+      navigate(safeNextPath(params.get("next")), { replace: true });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Login failed.");
     } finally {
