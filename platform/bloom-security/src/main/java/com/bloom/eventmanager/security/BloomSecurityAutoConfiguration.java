@@ -8,6 +8,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
@@ -40,9 +41,23 @@ public class BloomSecurityAutoConfiguration {
                 .build();
     }
 
-    @Bean
+    /**
+     * Nested on purpose. Feign is an optional dependency — knowledge-service and
+     * ai-service have no Feign clients — and {@code @ConditionalOnClass} on a
+     * {@code @Bean} method is not enough to make that work: Spring reflects over
+     * the enclosing class's method signatures to build its metadata, which loads
+     * each return type, and {@code InternalTokenFeignInterceptor} implements
+     * {@code feign.RequestInterceptor}. That throws NoClassDefFoundError before
+     * the condition is ever evaluated. Holding the bean in a nested configuration
+     * keeps its signature unread until the condition on the nested class passes.
+     */
+    @Configuration(proxyBeanMethods = false)
     @ConditionalOnClass(name = "feign.RequestInterceptor")
-    InternalTokenFeignInterceptor internalTokenFeignInterceptor(BloomSecurityProperties properties) {
-        return new InternalTokenFeignInterceptor(properties);
+    static class FeignInterceptorConfiguration {
+
+        @Bean
+        InternalTokenFeignInterceptor internalTokenFeignInterceptor(BloomSecurityProperties properties) {
+            return new InternalTokenFeignInterceptor(properties);
+        }
     }
 }
