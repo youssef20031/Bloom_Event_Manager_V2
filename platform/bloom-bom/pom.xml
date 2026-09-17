@@ -42,6 +42,11 @@
                 <version>${project.version}</version>
             </dependency>
             <dependency>
+                <groupId>com.bloom.eventmanager</groupId>
+                <artifactId>bloom-security</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
                 <groupId>org.springframework.ai</groupId>
                 <artifactId>spring-ai-bom</artifactId>
                 <version>${spring-ai.version}</version>
