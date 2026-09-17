@@ -47,7 +47,14 @@ management:
         include: health,info,metrics
   endpoint:
     health:
-      show-details: always
+      # `when-authorized`, not `always`: /actuator/health/** is permit-all so the
+      # Compose healthchecks can curl it without credentials, and the gateway is
+      # published to the host. With `always`, an anonymous caller got the whole
+      # discoveryComposite indicator — every registered service with its container
+      # IP and port — plus host disk paths. Anonymous callers now get
+      # {"status":"UP"} and a 200, which is all the probes read; an authenticated
+      # caller still gets the full detail.
+      show-details: when-authorized
       probes:
         enabled: true
   # ── Tracing (Phase 5) ────────────────────────────────────────────────────

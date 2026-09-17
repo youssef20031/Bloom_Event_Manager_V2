@@ -11,7 +11,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import com.bloom.eventmanager.storage.client.dto.DriveFileMetadata;
 import com.bloom.eventmanager.storage.client.dto.DriveFileUpsert;
 
-@FeignClient(name = "knowledge-service", fallback = KnowledgeClientFallback.class)
+@FeignClient(name = "knowledge-service", fallbackFactory = KnowledgeClientFallbackFactory.class)
 public interface KnowledgeClient {
 
     @GetMapping("/api/v1/drive-files")

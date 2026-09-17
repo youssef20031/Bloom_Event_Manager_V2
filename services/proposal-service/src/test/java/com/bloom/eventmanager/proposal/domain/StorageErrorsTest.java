@@ -11,6 +11,7 @@ import feign.Request;
 import com.bloom.eventmanager.common.error.BloomException;
 import com.bloom.eventmanager.common.error.ErrorCode;
 import com.bloom.eventmanager.common.error.ExternalServiceException;
+import com.bloom.eventmanager.common.error.ServiceUnavailableException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -45,5 +46,22 @@ class StorageErrorsTest {
 
         assertThat(translated).isInstanceOf(ExternalServiceException.class)
                 .isNotInstanceOf(DriveNotAuthenticatedException.class);
+    }
+
+    /**
+     * proposal-service is called straight from the browser, so a peer being down has to
+     * reach it as 503 SERVICE_UNAVAILABLE. StorageClientFallbackFactory raises exactly
+     * that; before this branch existed, translate() re-wrapped it as a 502
+     * EXTERNAL_SERVICE_ERROR and every storage hop in the SPA reported the wrong status.
+     */
+    @Test
+    void aFallbacksServiceUnavailableSurvivesAsItsOwn503() {
+        ServiceUnavailableException unavailable =
+                new ServiceUnavailableException("storage-service unavailable (circuit open)", null);
+
+        RuntimeException translated = StorageErrors.translate(unavailable);
+
+        assertThat(translated).isSameAs(unavailable);
+        assertThat(((BloomException) translated).errorCode()).isEqualTo(ErrorCode.SERVICE_UNAVAILABLE);
     }
 }

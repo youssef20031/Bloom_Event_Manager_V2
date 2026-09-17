@@ -11,7 +11,7 @@ import com.bloom.eventmanager.proposal.client.dto.CompanyFileRequest;
 import com.bloom.eventmanager.proposal.client.dto.CompanyFileResponse;
 import com.bloom.eventmanager.proposal.client.dto.CompanyFolder;
 
-@FeignClient(name = "storage-service", fallback = StorageClientFallback.class)
+@FeignClient(name = "storage-service", fallbackFactory = StorageClientFallbackFactory.class)
 public interface StorageClient {
 
     @GetMapping("/api/v1/storage/companies")
