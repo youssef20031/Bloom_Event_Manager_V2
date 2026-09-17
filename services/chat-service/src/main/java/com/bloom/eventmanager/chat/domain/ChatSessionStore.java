@@ -69,7 +69,7 @@ public class ChatSessionStore {
     }
 
     public List<ChatSessionDocument> summaries() {
-        return repository.findAll(Sort.by(Sort.Direction.DESC, "updatedAt"));
+        return repository.findSummaries(Sort.by(Sort.Direction.DESC, "updatedAt"));
     }
 
     public List<ChatSessionDocument> mentioning(String companyName) {

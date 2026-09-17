@@ -111,6 +111,23 @@ class ChatSessionStoreIntegrationTests {
         assertThat(store.summaries()).extracting(ChatSessionDocument::getSessionId).containsExactly("new", "old");
     }
 
+    /**
+     * Pins the server-side {@code $slice: 1} projection: {@code summaries()}
+     * must not load a session's full message history just to have
+     * {@code SessionController} discard all but the first message client-side.
+     */
+    @Test
+    void summariesOnlyProjectTheFirstMessageOfEachSession() {
+        store.append("s1", List.of(msg("user", "first"), msg("model", "second"), msg("user", "third")));
+
+        ChatSessionDocument summary = store.summaries().stream()
+                .filter(s -> "s1".equals(s.getSessionId())).findFirst().orElseThrow();
+
+        assertThat(summary.getMessages()).extracting(ChatMessage::content).containsExactly("first");
+        assertThat(summary.getCreatedAt()).isNotNull();
+        assertThat(summary.getUpdatedAt()).isNotNull();
+    }
+
     @Test
     void findsAndCountsSessionsMentioningACompanyCaseInsensitively() {
         store.append("s1", List.of(msg("user", "Ideas for ACME Corp offsite")));

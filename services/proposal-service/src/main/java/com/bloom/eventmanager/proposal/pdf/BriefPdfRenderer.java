@@ -241,7 +241,14 @@ public class BriefPdfRenderer {
             int total = streams.size();
             for (int i = 0; i < total; i++) {
                 PDPageContentStream s = streams.get(i);
-                float footerY = PAGE_H - 40;
+                // A raw PDF baseline, bottom-left origin — unlike every other
+                // call site here, which goes through text()'s yFromTop -> PDF
+                // conversion. 40 is 40pt from the BOTTOM, matching V1
+                // (PDFKit, top-left origin, where this same "PAGE_H - 40"
+                // expression means 40pt from the bottom); using PAGE_H - 40
+                // here placed the footer 40pt from the TOP instead, inside
+                // the header band on page 1.
+                float footerY = 40;
                 s.setStrokingColor(BORDER);
                 s.setLineWidth(1);
                 s.moveTo(50, footerY + 10);

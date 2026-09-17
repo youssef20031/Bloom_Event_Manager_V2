@@ -19,6 +19,7 @@ import com.bloom.eventmanager.chat.domain.ChatMessage;
 import com.bloom.eventmanager.chat.domain.ChatSessionDocument;
 import com.bloom.eventmanager.pdf.MixedTextWriter;
 import com.bloom.eventmanager.pdf.PdfFonts;
+import com.bloom.eventmanager.pdf.SafeText;
 import com.bloom.eventmanager.pdf.ScriptRuns;
 
 /**
@@ -196,7 +197,11 @@ public class ChatPdfRenderer {
             content.beginText();
             content.setFont(font, size);
             content.newLineAtOffset(x, baseline);
-            content.showText(text);
+            // Drive filenames reach this via the "Sources:" list — an Arabic,
+            // emoji, or other WinAnsi-incompatible character in one throws
+            // IllegalArgumentException from PDFont.encode otherwise, and V1
+            // (PDFKit) never throws on an unsupported glyph.
+            content.showText(SafeText.forFont(font, text));
             content.endText();
         }
 

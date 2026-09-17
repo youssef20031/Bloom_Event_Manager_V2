@@ -18,7 +18,20 @@ public class ChatSessionDocument {
     @JsonIgnore
     private String id;
 
-    @Indexed(unique = true)
+    /**
+     * Created by {@link ChatSessionIndexInitializer}, not by this annotation:
+     * auto-index-creation is off (see chat-service.yml) so an unreachable
+     * MongoDB cannot abort startup, and so a fresh index build cannot collide
+     * with V1's Mongoose-created one. {@code useGeneratedName = true} makes
+     * the annotation itself agree with that initializer if auto-index-creation
+     * is ever turned back on: an unnamed {@code @Indexed} otherwise resolves
+     * to the field's dot-path ("sessionId"), and MongoDB rejects a same-key
+     * index registered under a different name from V1's Mongoose-generated
+     * "sessionId_1" (error 85, IndexOptionsConflict) — aborting context
+     * refresh with a DataIntegrityViolationException. useGeneratedName makes
+     * the server generate "sessionId_1" itself, matching V1's name exactly.
+     */
+    @Indexed(unique = true, useGeneratedName = true)
     private String sessionId;
 
     private List<ChatMessage> messages = new ArrayList<>();

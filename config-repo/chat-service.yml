@@ -14,7 +14,16 @@ spring:
     database: ${MONGO_CHAT_DB:chatdb}
   data:
     mongodb:
-      auto-index-creation: true
+      # Deliberately off, matching storage-service.yml's rationale: auto-index
+      # creation runs during context refresh, so an unreachable MongoDB would
+      # abort startup outright, and — the failure actually hit here — V1's
+      # Mongoose already built a unique index on chatsessions.sessionId named
+      # "sessionId_1"; MongoDB rejects a same-key index registered under any
+      # other name (error 85, IndexOptionsConflict), which is exactly what
+      # unassisted auto-index-creation produced against V1's real chatdb. The
+      # index is created by ChatSessionIndexInitializer instead, which
+      # tolerates both an unreachable Mongo and an index V1 already created.
+      auto-index-creation: false
 
 bloom:
   chat:

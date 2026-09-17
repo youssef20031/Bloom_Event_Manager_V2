@@ -48,6 +48,30 @@ class ChatPdfRendererTest {
         }
     }
 
+    /**
+     * Regression guard: sources are Google Drive filenames, drawn through the
+     * one showText() in this class that was never routed through SafeText.
+     * A WinAnsi-incompatible character in a filename — an Arabic name is
+     * realistic input from a Cairo-based business — made PDFont.encode throw
+     * IllegalArgumentException, which render()'s catch (IOException) does not
+     * catch; it escaped as an opaque 500. V1 (PDFKit) never throws on an
+     * unsupported glyph, so the parity target is "renders, with placeholders".
+     */
+    @Test
+    void arabicSourceFilenameDegradesToPlaceholdersRatherThanThrowing() throws IOException {
+        ChatSessionDocument session = new ChatSessionDocument();
+        session.setSessionId("s");
+        session.setMessages(List.of(new ChatMessage("model", "Here is the guide.", Instant.parse("2026-09-15T10:00:00Z"),
+                List.of("دليل الفعاليات.pdf"), null)));
+
+        byte[] pdf = renderer.render(session);
+
+        try (PDDocument doc = Loader.loadPDF(pdf)) {
+            String text = new PDFTextStripper().getText(doc);
+            assertThat(text).contains("Sources:").contains("[1]").contains(".pdf");
+        }
+    }
+
     @Test
     void longConversationsSpillOntoMorePages() throws IOException {
         ChatSessionDocument session = new ChatSessionDocument();
