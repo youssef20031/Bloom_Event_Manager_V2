@@ -1,0 +1,373 @@
+/**
+ * Animations & Micro-interactions
+ * Bloom Event Management Platform
+ * 
+ * Performance-optimized animations with full accessibility support
+ * Respects prefers-reduced-motion (WCAG 2.2)
+ */
+
+/* ============================================
+   RESPECT REDUCED MOTION (WCAG 2.2)
+   ============================================ */
+
+@media (prefers-reduced-motion: reduce) {
+
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+    }
+}
+
+/* ============================================
+   PAGE TRANSITIONS
+   ============================================ */
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+    }
+
+    to {
+        opacity: 1;
+    }
+}
+
+@keyframes slideInUp {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes slideInRight {
+    from {
+        opacity: 0;
+        transform: translateX(20px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+/* Page mount animation */
+.page-enter {
+    animation: fadeIn 200ms var(--transition-base);
+}
+
+/* Tab transition */
+.tab-enter {
+    animation: slideInUp 300ms var(--transition-base);
+}
+
+/* ============================================
+   MICRO-INTERACTIONS
+   ============================================ */
+
+/* Button hover lift */
+@media (hover: hover) and (prefers-reduced-motion: no-preference) {
+
+    .btn-primary:hover,
+    .btn-secondary:hover {
+        transform: translateY(-2px);
+    }
+}
+
+/* Focus ring animation */
+@media (prefers-reduced-motion: no-preference) {
+    *:focus-visible {
+        animation: focusPulse 0.3s ease-out;
+    }
+}
+
+@keyframes focusPulse {
+    0% {
+        outline-offset: 0;
+    }
+
+    50% {
+        outline-offset: 4px;
+    }
+
+    100% {
+        outline-offset: var(--focus-ring-offset);
+    }
+}
+
+/* Card hover elevation */
+@media (hover: hover) and (prefers-reduced-motion: no-preference) {
+    .card-interactive:hover {
+        transition: transform var(--transition-base), box-shadow var(--transition-base);
+    }
+}
+
+/* ============================================
+   LOADING STATES
+   ============================================ */
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.spinner {
+    animation: spin 0.8s linear infinite;
+}
+
+/* Skeleton loading */
+@keyframes shimmer {
+    0% {
+        background-position: -468px 0;
+    }
+
+    100% {
+        background-position: 468px 0;
+    }
+}
+
+.skeleton {
+    background: linear-gradient(90deg,
+            var(--color-neutral-200) 0px,
+            var(--color-neutral-300) 40px,
+            var(--color-neutral-200) 80px);
+    background-size: 800px 100px;
+    animation: shimmer 1.5s infinite;
+    border-radius: var(--radius-md);
+}
+
+/* Pulse animation for loading */
+@keyframes pulse {
+
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.5;
+    }
+}
+
+.pulse {
+    animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* ============================================
+   TOAST NOTIFICATIONS
+   ============================================ */
+
+@keyframes slideInFromRight {
+    from {
+        transform: translateX(120%);
+        opacity: 0;
+    }
+
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+@keyframes slideOutToRight {
+    from {
+        transform: translateX(0);
+        opacity: 1;
+    }
+
+    to {
+        transform: translateX(120%);
+        opacity: 0;
+    }
+}
+
+.toast-enter {
+    animation: slideInFromRight 300ms var(--transition-base);
+}
+
+.toast-exit {
+    animation: slideOutToRight 200ms var(--transition-base);
+}
+
+/* ============================================
+   MODAL ANIMATIONS
+   ============================================ */
+
+@keyframes modalBackdropFadeIn {
+    from {
+        opacity: 0;
+    }
+
+    to {
+        opacity: 1;
+    }
+}
+
+@keyframes modalSlideUp {
+    from {
+        opacity: 0;
+        transform: translateY(50px) scale(0.95);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+.modal-backdrop {
+    animation: modalBackdropFadeIn 200ms ease-out;
+}
+
+.modal-content {
+    animation: modalSlideUp 300ms var(--transition-base);
+}
+
+/* ============================================
+   PROGRESS ANIMATIONS
+   ============================================ */
+
+@keyframes progressIndeterminate {
+    0% {
+        left: -35%;
+        right: 100%;
+    }
+
+    60% {
+        left: 100%;
+        right: -90%;
+    }
+
+    100% {
+        left: 100%;
+        right: -90%;
+    }
+}
+
+.progress-indeterminate::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    background: var(--color-accent-primary);
+    animation: progressIndeterminate 2s cubic-bezier(0.65, 0.815, 0.735, 0.395) infinite;
+}
+
+/* ============================================
+   BOUNCE ANIMATION (for success states)
+   ============================================ */
+
+@keyframes bounce {
+
+    0%,
+    100% {
+        transform: translateY(0);
+    }
+
+    50% {
+        transform: translateY(-10px);
+    }
+}
+
+.bounce {
+    animation: bounce 0.6s ease-in-out;
+}
+
+/* ============================================
+   SHAKE ANIMATION (for error states)
+   ============================================ */
+
+@keyframes shake {
+
+    0%,
+    100% {
+        transform: translateX(0);
+    }
+
+    10%,
+    30%,
+    50%,
+    70%,
+    90% {
+        transform: translateX(-5px);
+    }
+
+    20%,
+    40%,
+    60%,
+    80% {
+        transform: translateX(5px);
+    }
+}
+
+.shake {
+    animation: shake 0.5s ease-in-out;
+}
+
+/* ============================================
+   PERFORMANCE OPTIMIZATIONS
+   ============================================ */
+
+/* Only animate transform and opacity for GPU acceleration */
+.will-animate {
+    will-change: transform, opacity;
+}
+
+/* Remove will-change after animation completes */
+@media (prefers-reduced-motion: no-preference) {
+    .animated:not(:hover):not(:focus) {
+        will-change: auto;
+    }
+}
+
+/* ============================================
+   TYPING INDICATOR
+   ============================================ */
+
+@keyframes typingDot {
+
+    0%,
+    60%,
+    100% {
+        transform: translateY(0);
+        opacity: 0.7;
+    }
+
+    30% {
+        transform: translateY(-10px);
+        opacity: 1;
+    }
+}
+
+.typing-indicator {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+}
+
+.typing-indicator span {
+    width: 8px;
+    height: 8px;
+    background: var(--color-neutral-400);
+    border-radius: 50%;
+    animation: typingDot 1.4s infinite;
+}
+
+.typing-indicator span:nth-child(2) {
+    animation-delay: 0.2s;
+}
+
+.typing-indicator span:nth-child(3) {
+    animation-delay: 0.4s;
+}

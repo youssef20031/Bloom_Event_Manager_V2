@@ -1,0 +1,216 @@
+/**
+ * Responsive Design System
+ * Bloom Event Management Platform
+ * 
+ * Mobile-first, content-driven breakpoints
+ * Modern CSS features: Container Queries, Fluid Typography
+ */
+
+/* ============================================
+   CONTAINER QUERIES SETUP
+   ============================================ */
+
+/* Enable container queries for responsive components */
+.container-responsive {
+    container-type: inline-size;
+    container-name: responsive-container;
+}
+
+/* ============================================
+   MOBILE PORTRAIT (320px - 480px)
+   Base styles - Mobile First
+   ============================================ */
+
+/* Base styles already applied in global.css */
+
+/* ============================================
+   MOBILE LANDSCAPE (481px - 768px)
+   ============================================ */
+
+@media (min-width: 481px) {
+    .container {
+        padding-left: var(--space-8);
+        padding-right: var(--space-8);
+    }
+
+    /* Slightly larger touch targets on landscape */
+    .btn {
+        min-height: var(--touch-target-preferred);
+    }
+}
+
+/* ============================================
+   TABLET (769px - 1024px)
+   ============================================ */
+
+@media (min-width: 769px) {
+
+    /* Two-column layouts */
+    .grid-2 {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: var(--space-6);
+    }
+
+    /* Navigation horizontal on tablet+ */
+    .nav-horizontal {
+        flex-direction: row;
+    }
+
+    /* Increase card padding */
+    .card {
+        padding: calc(var(--card-padding) * 1.25);
+    }
+}
+
+/* ============================================
+   DESKTOP (1025px - 1440px)
+   ============================================ */
+
+@media (min-width: 1025px) {
+
+    /* Three-column layouts */
+    .grid-3 {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: var(--space-8);
+    }
+
+    /* Four-column layouts */
+    .grid-4 {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: var(--space-6);
+    }
+
+    /* Hover effects only on desktop */
+    @media (hover: hover) {
+        .card-interactive:hover {
+            transform: translateY(-4px);
+        }
+    }
+}
+
+/* ============================================
+   LARGE DESKTOP (1441px+)
+   ============================================ */
+
+@media (min-width: 1441px) {
+    .container {
+        max-width: 1440px;
+    }
+}
+
+/* ============================================
+   RESPONSIVE UTILITIES
+   ============================================ */
+
+/* Hide/Show based on breakpoint */
+.hide-mobile {
+    display: none;
+}
+
+@media (min-width: 769px) {
+    .hide-mobile {
+        display: block;
+    }
+
+    .hide-tablet {
+        display: none;
+    }
+}
+
+@media (min-width: 1025px) {
+    .hide-tablet {
+        display: block;
+    }
+
+    .hide-desktop {
+        display: none;
+    }
+}
+
+/* Show only on mobile */
+.show-mobile {
+    display: block;
+}
+
+@media (min-width: 769px) {
+    .show-mobile {
+        display: none;
+    }
+}
+
+/* ============================================
+   CONTAINER QUERIES
+   (93% browser support as of 2026)
+   ============================================ */
+
+@container responsive-container (min-width: 400px) {
+    .container-card {
+        padding: var(--space-6);
+    }
+}
+
+@container responsive-container (min-width: 600px) {
+    .container-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: var(--space-4);
+    }
+}
+
+@container responsive-container (min-width: 800px) {
+    .container-grid {
+        grid-template-columns: repeat(3, 1fr);
+    }
+}
+
+/* ============================================
+   TOUCH DEVICE OPTIMIZATIONS
+   ============================================ */
+
+/* Replace hover with active on touch devices */
+@media (hover: none) {
+    .btn:hover {
+        transform: none;
+    }
+
+    .btn:active {
+        transform: scale(0.98);
+    }
+
+    .card-interactive:hover {
+        transform: none;
+    }
+
+    .card-interactive:active {
+        transform: translateY(-2px);
+    }
+}
+
+/* ============================================
+   PRINT STYLES
+   ============================================ */
+
+@media print {
+
+    /* Hide navigation and interactive elements */
+    nav,
+    .btn,
+    .form-group {
+        display: none;
+    }
+
+    /* Optimize for print */
+    body {
+        background: white;
+        color: black;
+    }
+
+    .card {
+        box-shadow: none;
+        border: 1px solid #ccc;
+        page-break-inside: avoid;
+    }
+}

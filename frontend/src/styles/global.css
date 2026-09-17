@@ -1,0 +1,316 @@
+/**
+ * Global Styles & Modern CSS Reset
+ * Bloom Event Management Platform
+ * 
+ * Based on 2026 best practices:
+ * - Modern CSS reset
+ * - Accessibility-first approach
+ * - Performance optimizations
+ */
+
+/* ============================================
+   MODERN CSS RESET
+   ============================================ */
+
+/* Box sizing rules */
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+}
+
+/* Remove default margin and padding */
+* {
+    margin: 0;
+    padding: 0;
+}
+
+/* Set core root defaults */
+html {
+    scroll-behavior: smooth;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+/* Respect user motion preferences (WCAG 2.2) */
+@media (prefers-reduced-motion: reduce) {
+
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+    }
+}
+
+/* Set core body defaults */
+body {
+    margin: 0;
+    padding: 0;
+    min-height: 100vh;
+    font-family: var(--font-family-base);
+    font-size: var(--font-size-base);
+    line-height: var(--line-height-base);
+    color: var(--text-primary);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    /* Aurora mesh gradient backdrop for the frosted-glass surfaces to refract */
+    background-color: #f8fafc;
+    background-image: var(--app-bg);
+    background-attachment: fixed;
+    background-repeat: no-repeat;
+}
+
+/* Graceful degradation: on browsers without backdrop-filter, make glass
+   surfaces opaque enough to stay legible over the aurora backdrop. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    :root {
+        --glass-bg: rgba(255, 255, 255, 0.92);
+        --glass-bg-strong: rgba(255, 255, 255, 0.97);
+        --glass-bg-subtle: rgba(255, 255, 255, 0.85);
+    }
+
+    :root[data-theme="dark"] {
+        --glass-bg: rgba(19, 26, 43, 0.94);
+        --glass-bg-strong: rgba(19, 26, 43, 0.98);
+        --glass-bg-subtle: rgba(19, 26, 43, 0.88);
+    }
+}
+
+/* Reduced-transparency users: drop the frosting, keep contrast. */
+@media (prefers-reduced-transparency: reduce) {
+    :root {
+        --glass-bg: rgba(255, 255, 255, 0.94);
+        --glass-bg-strong: rgba(255, 255, 255, 0.98);
+        --glass-bg-subtle: rgba(255, 255, 255, 0.88);
+    }
+
+    :root[data-theme="dark"] {
+        --glass-bg: rgba(19, 26, 43, 0.95);
+        --glass-bg-strong: rgba(19, 26, 43, 0.99);
+        --glass-bg-subtle: rgba(19, 26, 43, 0.90);
+    }
+}
+
+/* Remove list styles on ul, ol elements with a class */
+ul[class],
+ol[class] {
+    list-style: none;
+}
+
+/* Make images easier to work with */
+img,
+picture,
+video,
+canvas,
+svg {
+    display: block;
+    max-width: 100%;
+    height: auto;
+}
+
+/* Inherit fonts for inputs and buttons */
+input,
+button,
+textarea,
+select {
+    font: inherit;
+    color: inherit;
+}
+
+/* Remove default button styles */
+button {
+    background: none;
+    border: none;
+    cursor: pointer;
+}
+
+/* ============================================
+   TYPOGRAPHY BASE
+   ============================================ */
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+    font-family: var(--font-family-display);
+    font-weight: var(--font-weight-bold);
+    line-height: var(--line-height-tight);
+    letter-spacing: var(--letter-spacing-tight);
+    color: var(--text-primary);
+}
+
+h1 {
+    font-size: var(--font-size-4xl);
+}
+
+h2 {
+    font-size: var(--font-size-3xl);
+}
+
+h3 {
+    font-size: var(--font-size-2xl);
+}
+
+h4 {
+    font-size: var(--font-size-xl);
+}
+
+h5 {
+    font-size: var(--font-size-lg);
+}
+
+h6 {
+    font-size: var(--font-size-base);
+}
+
+p {
+    line-height: var(--line-height-relaxed);
+    margin-bottom: var(--space-4);
+}
+
+p:last-child {
+    margin-bottom: 0;
+}
+
+a {
+    color: var(--color-accent-primary);
+    text-decoration: none;
+    transition: color var(--transition-fast);
+    font-weight: var(--font-weight-semibold);
+}
+
+a:hover {
+    color: var(--color-accent-primary-hover);
+    text-decoration: underline;
+    text-decoration-thickness: 2px;
+    text-underline-offset: 4px;
+}
+
+a:focus-visible {
+    outline: var(--focus-ring-width) solid var(--focus-ring-color);
+    outline-offset: var(--focus-ring-offset);
+    border-radius: var(--radius-sm);
+}
+
+/* ============================================
+   ACCESSIBILITY UTILITIES
+   ============================================ */
+
+/* Screen reader only content */
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border-width: 0;
+}
+
+/* Skip to main content link */
+.skip-to-content {
+    position: absolute;
+    top: -100%;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: var(--space-4) var(--space-6);
+    background: var(--color-accent-primary);
+    color: white;
+    font-weight: var(--font-weight-semibold);
+    border-radius: var(--radius-md);
+    z-index: var(--z-modal);
+    transition: top var(--transition-fast);
+}
+
+.skip-to-content:focus {
+    top: var(--space-4);
+}
+
+/* ============================================
+   FOCUS MANAGEMENT (WCAG 2.2)
+   ============================================ */
+
+/* Enhanced focus visibility for all interactive elements */
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+a:focus-visible,
+[tabindex]:focus-visible {
+    outline: var(--focus-ring-width) solid var(--focus-ring-color);
+    outline-offset: var(--focus-ring-offset);
+    border-radius: var(--radius-sm);
+}
+
+/* Never hide focus indicators */
+:focus:not(:focus-visible) {
+    outline: none;
+}
+
+:focus-visible {
+    outline: var(--focus-ring-width) solid var(--focus-ring-color);
+    outline-offset: var(--focus-ring-offset);
+}
+
+/* ============================================
+   UTILITY CLASSES
+   ============================================ */
+
+/* Container */
+.container {
+    width: 100%;
+    max-width: 1280px;
+    margin-left: auto;
+    margin-right: auto;
+    padding-left: var(--space-6);
+    padding-right: var(--space-6);
+}
+
+/* Visually hidden but accessible */
+.visually-hidden {
+    position: absolute !important;
+    width: 1px !important;
+    height: 1px !important;
+    padding: 0 !important;
+    margin: -1px !important;
+    overflow: hidden !important;
+    clip: rect(0, 0, 0, 0) !important;
+    white-space: nowrap !important;
+    border: 0 !important;
+}
+
+/* Text alignment */
+.text-center {
+    text-align: center;
+}
+
+.text-left {
+    text-align: left;
+}
+
+.text-right {
+    text-align: right;
+}
+
+/* ============================================
+   PERFORMANCE OPTIMIZATIONS
+   ============================================ */
+
+/* Optimize rendering for animations */
+@media (prefers-reduced-motion: no-preference) {
+    .will-animate {
+        will-change: transform, opacity;
+    }
+}
+
+/* Lazy loading optimization */
+img[loading="lazy"] {
+    content-visibility: auto;
+}

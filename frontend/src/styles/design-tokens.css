@@ -1,0 +1,294 @@
+/**
+ * Design Tokens - Glassmorphism
+ * Bloom Event Management Platform
+ *
+ * Structure:
+ *   :root                    → structural primitives + LIGHT theme (default)
+ *   :root[data-theme="dark"] → dark-theme overrides
+ *
+ * Theme-dependent component tokens are defined once as var() references to the
+ * semantic glass/text tokens, so they auto-adapt when a theme block overrides
+ * the underlying glass/text values (CSS custom properties resolve lazily).
+ */
+
+:root {
+   /* ============================================
+      BRAND ACCENTS (theme-independent) — soft sky blue
+      ============================================ */
+   --color-accent-primary: #0ea5e9;
+   --color-accent-primary-hover: #0284c7;
+   --color-accent-secondary: #38bdf8;
+   --color-accent-secondary-hover: #0284c7;
+   --color-accent-tertiary: #f59e0b;
+   --color-accent-tertiary-hover: #d97706;
+
+   /* Legacy ink / paper primitives (still referenced in a few places) */
+   --color-ink: #0f172a;
+   --color-paper: #eaf4ff;
+   --color-paper-light: #ffffff;
+   --color-paper-dark: #d9e9fb;
+
+   /* Neutral scale */
+   --color-neutral-50: #f7fafd;
+   --color-neutral-100: #eef4fb;
+   --color-neutral-200: #dce8f5;
+   --color-neutral-300: #b9cfe6;
+   --color-neutral-400: #7fa0c4;
+
+   /* Sky blue scale */
+   --color-blue-50: #f0f9ff;
+   --color-blue-100: #e0f2fe;
+   --color-blue-200: #bae6fd;
+   --color-blue-400: #38bdf8;
+   --color-blue-500: #0ea5e9;
+   --color-blue-600: #0284c7;
+   --color-blue-700: #0369a1;
+
+   /* Semantic base colors */
+   --color-success: #059669;
+   --color-warning: #d97706;
+   --color-error: #dc2626;
+   --color-info: #0ea5e9;
+
+   /* ============================================
+      TYPOGRAPHY
+      ============================================ */
+   --font-family-base: 'Outfit', system-ui, sans-serif;
+   --font-family-display: 'Syne', sans-serif;
+   --font-family-mono: 'Space Mono', 'Consolas', ui-monospace, monospace;
+
+   --font-size-xs: clamp(0.75rem, 0.7rem + 0.25vw, 0.875rem);
+   --font-size-sm: clamp(0.875rem, 0.8rem + 0.35vw, 1rem);
+   --font-size-base: clamp(1rem, 0.9rem + 0.5vw, 1.125rem);
+   --font-size-lg: clamp(1.125rem, 1rem + 0.625vw, 1.25rem);
+   --font-size-xl: clamp(1.25rem, 1.1rem + 0.75vw, 1.5rem);
+   --font-size-2xl: clamp(1.5rem, 1.3rem + 1vw, 2rem);
+   --font-size-3xl: clamp(2rem, 1.6rem + 1.5vw, 3rem);
+   --font-size-4xl: clamp(2.5rem, 2rem + 2vw, 4rem);
+   --font-size-5xl: clamp(2.25rem, 1.85rem + 1.8vw, 3.25rem);
+
+   --font-weight-light: 300;
+   --font-weight-normal: 400;
+   --font-weight-medium: 500;
+   --font-weight-semibold: 600;
+   --font-weight-bold: 700;
+   --font-weight-extrabold: 800;
+
+   --line-height-tight: 1.15;
+   --line-height-base: 1.4;
+   --line-height-relaxed: 1.6;
+
+   --letter-spacing-tight: -0.02em;
+   --letter-spacing-normal: 0;
+   --letter-spacing-wide: 0.05em;
+
+   /* ============================================
+      SPACING SCALE
+      ============================================ */
+   --space-1: 0.25rem;
+   --space-2: 0.5rem;
+   --space-3: 0.75rem;
+   --space-4: 1rem;
+   --space-5: 1.25rem;
+   --space-6: 1.5rem;
+   --space-8: 2rem;
+   --space-10: 2.5rem;
+   --space-12: 3rem;
+   --space-16: 4rem;
+   --space-24: 6rem;
+
+   /* ============================================
+      SHAPE — rounded corners for glass
+      ============================================ */
+   --radius-sm: 8px;
+   --radius-md: 12px;
+   --radius-lg: 16px;
+   --radius-xl: 24px;
+   --radius-2xl: 32px;
+   --radius-full: 9999px;
+
+   --border-width: 1px;
+   --border-width-thick: 1.5px;
+
+   /* ============================================
+      GLASS BLUR
+      ============================================ */
+   --glass-blur: blur(16px) saturate(140%);
+   --glass-blur-strong: blur(24px) saturate(160%);
+   --glass-blur-soft: blur(8px) saturate(120%);
+
+   /* ============================================
+      MOTION
+      ============================================ */
+   --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
+   --transition-base: 250ms cubic-bezier(0.4, 0, 0.2, 1);
+   --transition-slow: 400ms cubic-bezier(0.25, 1, 0.5, 1);
+   --transition-bounce: 500ms cubic-bezier(0.34, 1.56, 0.64, 1);
+
+   /* ============================================
+      Z-INDEX SCALE
+      ============================================ */
+   --z-base: 0;
+   --z-dropdown: 1000;
+   --z-sticky: 1100;
+   --z-overlay: 1200;
+   --z-modal: 1300;
+   --z-toast: 1400;
+
+   /* ============================================
+      TOUCH TARGETS
+      ============================================ */
+   --touch-target-min: 44px;
+   --touch-target-preferred: 48px;
+
+   /* ============================================================
+      THEME: LIGHT (default)
+      ============================================================ */
+   color-scheme: light;
+
+   /* Soft sky-blue ground (applied on <body> in global.css) */
+   --app-bg: linear-gradient(180deg, #eaf4ff 0%, #dbeafe 100%);
+
+   /* Solid "sheet" surfaces — white cards afloat on the blue ground */
+   --glass-bg: #ffffff;
+   --glass-bg-strong: #ffffff;
+   --glass-bg-subtle: #eef6ff;
+   --glass-border: rgba(14, 116, 189, 0.14);
+   --glass-highlight: rgba(255, 255, 255, 0.9);
+   --glass-shadow: 0 1px 2px rgba(14, 100, 189, 0.06), 0 14px 30px -18px rgba(14, 100, 189, 0.30);
+
+   /* Soft, diffuse elevation shadows, blue-tinted */
+   --shadow-xs: 0 1px 2px rgba(20, 70, 140, 0.07);
+   --shadow-sm: 0 4px 12px rgba(20, 70, 140, 0.09);
+   --shadow-md: 0 8px 24px rgba(20, 70, 140, 0.13);
+   --shadow-lg: 0 16px 40px rgba(20, 70, 140, 0.17);
+   --shadow-xl: 0 24px 60px rgba(20, 70, 140, 0.21);
+   --shadow-hover-sm: 0 6px 18px rgba(20, 70, 140, 0.13);
+   --shadow-hover-md: 0 12px 32px rgba(20, 70, 140, 0.17);
+
+   /* Backgrounds */
+   --bg-primary: transparent;
+   --bg-secondary: var(--glass-bg);
+   --bg-tertiary: var(--glass-bg-subtle);
+   --bg-inverse: rgba(12, 32, 66, 0.85);
+
+   /* Text */
+   --text-primary: #142946;
+   --text-secondary: #45608a;
+   --text-tertiary: #5b7599;
+   --text-muted: #8ba3c4;
+   --text-inverse: #f0f8ff;
+
+   /* Borders */
+   --border-subtle: var(--glass-border);
+   --border-default: var(--glass-border);
+   --border-strong: rgba(14, 90, 160, 0.20);
+   --border-primary: var(--glass-border);
+
+   /* Semantic tints (translucent) */
+   --color-success-bg: rgba(5, 150, 105, 0.14);
+   --color-success-text: #047857;
+   --color-warning-bg: rgba(217, 119, 6, 0.14);
+   --color-warning-text: #b45309;
+   --color-error-bg: rgba(220, 38, 38, 0.14);
+   --color-error-text: #b91c1c;
+   --color-info-bg: rgba(14, 165, 233, 0.14);
+   --color-info-text: #0369a1;
+
+   /* ============================================
+      COMPONENT TOKENS (reference the theme tokens above)
+      ============================================ */
+   --button-padding-y: 0.75rem;
+   --button-padding-x: 1.5rem;
+   --button-radius: var(--radius-md);
+
+   --button-primary-bg: var(--color-accent-primary);
+   --button-primary-text: #ffffff;
+   --button-primary-hover-bg: var(--color-accent-primary-hover);
+   --button-primary-shadow: var(--shadow-sm);
+
+   --button-secondary-bg: var(--glass-bg);
+   --button-secondary-text: var(--text-primary);
+   --button-secondary-border: var(--glass-border);
+   --button-secondary-hover-bg: var(--glass-bg-strong);
+
+   --input-bg: var(--glass-bg-strong);
+   --input-border: var(--glass-border);
+   --input-border-focus: var(--color-accent-primary);
+   --input-text: var(--text-primary);
+   --input-placeholder: var(--text-muted);
+   --input-radius: var(--radius-md);
+   --input-padding-x: var(--space-4);
+   --input-padding-y: var(--space-3);
+
+   --focus-ring-width: 2px;
+   --focus-ring-offset: 2px;
+   --focus-ring-color: var(--color-accent-primary);
+   --focus-ring-opacity: 1;
+
+   --card-bg: var(--glass-bg);
+   --card-border: var(--glass-border);
+   --card-radius: var(--radius-lg);
+   --card-padding: var(--space-8);
+   --card-shadow: var(--glass-shadow);
+   --card-shadow-hover: var(--shadow-hover-md);
+
+   --nav-bg: var(--glass-bg);
+   --nav-border: var(--glass-border);
+   --nav-item-active-bg: rgba(14, 165, 233, 0.12);
+   --nav-item-active-text: var(--color-accent-primary);
+   --nav-item-hover-bg: var(--glass-bg-strong);
+}
+
+/* ============================================================
+   THEME: DARK (overrides)
+   ============================================================ */
+:root[data-theme="dark"] {
+   color-scheme: dark;
+
+   --app-bg: linear-gradient(180deg, #10182a 0%, #0c1220 100%);
+
+   /* Glass surfaces */
+   --glass-bg: #182034;
+   --glass-bg-strong: #1e2740;
+   --glass-bg-subtle: #141b2c;
+   --glass-border: rgba(255, 255, 255, 0.09);
+   --glass-highlight: rgba(255, 255, 255, 0.14);
+   --glass-shadow: 0 1px 2px rgba(0, 0, 0, 0.30), 0 16px 34px -18px rgba(0, 0, 0, 0.58);
+
+   /* Deeper shadows on dark */
+   --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.30);
+   --shadow-sm: 0 4px 12px rgba(0, 0, 0, 0.35);
+   --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.40);
+   --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.48);
+   --shadow-xl: 0 24px 60px rgba(0, 0, 0, 0.55);
+   --shadow-hover-sm: 0 6px 18px rgba(0, 0, 0, 0.40);
+   --shadow-hover-md: 0 12px 32px rgba(0, 0, 0, 0.50);
+
+   /* Backgrounds */
+   --bg-inverse: rgba(248, 250, 252, 0.90);
+
+   /* Text */
+   --text-primary: #f4f6fb;
+   --text-secondary: #c2cadd;
+   --text-tertiary: #97a1b8;
+   --text-muted: #6f7a94;
+   --text-inverse: #131b30;
+
+   /* Borders */
+   --border-strong: rgba(255, 255, 255, 0.22);
+
+   /* Semantic tints (brighter text for legibility on dark glass) */
+   --color-success-bg: rgba(16, 185, 129, 0.18);
+   --color-success-text: #6ee7b7;
+   --color-warning-bg: rgba(245, 158, 11, 0.18);
+   --color-warning-text: #fcd34d;
+   --color-error-bg: rgba(248, 113, 113, 0.18);
+   --color-error-text: #fca5a5;
+   --color-info-bg: rgba(56, 189, 248, 0.18);
+   --color-info-text: #7dd3fc;
+
+   /* Nav active state */
+   --nav-item-active-bg: rgba(14, 165, 233, 0.24);
+   --nav-item-active-text: #7dd3fc;
+}

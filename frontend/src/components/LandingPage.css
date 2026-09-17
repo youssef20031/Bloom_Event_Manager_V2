@@ -1,0 +1,547 @@
+/**
+ * Bloom — Landing ("The Brief")
+ *
+ * The product turns messy inputs into a client-ready document, so the page is
+ * one: an event brief / run-of-show. Cool drafting-paper ground, navy ink,
+ * Syne display, a Space Mono utility voice for field labels + cue numbers, and
+ * a single rose accent for live actions. Every surface is SOLID (no glass over
+ * a gradient) so card edges never seam against the background.
+ *
+ * Self-contained + theme-independent: the landing fixes its own light palette
+ * and covers the viewport, so the app's shared tokens/aurora never leak in.
+ */
+
+.landing {
+  /* Palette — soft sky blue */
+  --paper: #eaf4ff;
+  --sheet: #ffffff;
+  --ink: #142946;
+  --ink-soft: #45608a;
+  --ink-faint: #8ba3c4;
+  --rule: rgba(14, 90, 160, 0.16);
+  --rule-soft: rgba(14, 90, 160, 0.05);
+  --accent: #0ea5e9;      /* sky — "bloom" */
+  --accent-press: #0284c7;
+  --night: #0c2340;       /* the CTA "lights down" band */
+
+  /* Type */
+  --display: "Syne", system-ui, sans-serif;
+  --body: "Outfit", system-ui, sans-serif;
+  --mono: "Space Mono", "Consolas", ui-monospace, monospace;
+
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  color: var(--ink);
+  font-family: var(--body);
+  background-color: var(--paper);
+  background-image:
+    linear-gradient(to right, var(--rule-soft) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--rule-soft) 1px, transparent 1px);
+  background-size: 64px 64px;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Neutralize the global <section> card + hover (App.css) for landing sections */
+.landing-hero,
+.landing-section,
+.landing-cta {
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 0;
+  background: transparent;
+  transition: none;
+}
+.landing-hero:hover,
+.landing-section:hover,
+.landing-cta:hover {
+  box-shadow: none;
+  border-color: transparent;
+  transform: none;
+}
+
+/* Shared inner column — the document's text block */
+.landing .section-inner {
+  width: 100%;
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 0 clamp(1.25rem, 5vw, 3.5rem);
+}
+
+/* ============================================================
+   Utility label — the call-sheet field voice
+   ============================================================ */
+.landing .doc-label {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+.landing .doc-label::before {
+  content: "";
+  width: 9px;
+  height: 9px;
+  background: var(--accent);
+  transform: rotate(45deg);
+  flex: none;
+}
+.landing .doc-label-invert {
+  color: rgba(255, 255, 255, 0.62);
+}
+
+/* ============================================================
+   Top bar
+   ============================================================ */
+.landing-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  background: color-mix(in srgb, var(--paper) 88%, transparent);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  border-bottom: 1px solid var(--rule);
+}
+.landing-topbar-inner {
+  width: 100%;
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 0.85rem clamp(1.25rem, 5vw, 3.5rem);
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+.landing-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  text-decoration: none;
+  flex: none;
+}
+.landing-logo-mark {
+  width: 30px;
+  height: 30px;
+  object-fit: contain;
+  flex: none;
+  display: block;
+}
+.landing-brand-sm .landing-logo-mark {
+  width: 24px;
+  height: 24px;
+}
+.landing-wordmark {
+  font-family: var(--display);
+  font-weight: 800;
+  font-size: 1.4rem;
+  letter-spacing: -0.03em;
+  color: var(--ink);
+}
+.landing-wordmark-dot {
+  color: var(--accent);
+}
+.landing-nav {
+  display: flex;
+  align-items: center;
+  gap: 1.6rem;
+  margin-left: auto;
+}
+.landing-nav a {
+  font-family: var(--body);
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: var(--ink-soft);
+  text-decoration: none;
+  transition: color 0.18s ease;
+}
+.landing-nav a:hover {
+  color: var(--ink);
+}
+.landing .btn-launch {
+  margin-left: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.55rem 1rem;
+  font-family: var(--body);
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--ink);
+  background: transparent;
+  border: 1px solid var(--rule);
+  border-radius: 7px;
+  cursor: pointer;
+  transition: border-color 0.18s ease, background 0.18s ease, transform 0.18s ease;
+  min-height: auto;
+}
+.landing .btn-launch:hover {
+  border-color: var(--ink);
+  background: var(--sheet);
+  transform: translateY(-1px);
+}
+.landing .btn-launch svg { transform: translateX(0); transition: transform 0.18s ease; }
+.landing .btn-launch:hover svg { transform: translateX(2px); }
+
+/* ============================================================
+   Layout rhythm
+   ============================================================ */
+.landing-main {
+  flex: 1;
+  width: 100%;
+}
+.landing-hero {
+  padding: clamp(3.5rem, 9vw, 7rem) 0 clamp(3rem, 7vw, 5.5rem);
+}
+.landing-section {
+  padding: clamp(3rem, 7vw, 5.5rem) 0;
+  border-top: 1px solid var(--rule);
+}
+
+/* ============================================================
+   Hero
+   ============================================================ */
+.landing .hero-inner {
+  max-width: 1080px;
+}
+.landing .hero-copy {
+  max-width: 720px;
+  margin: 0 auto;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.landing .hero-logo-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 68px;
+  height: 68px;
+  padding: 0.9rem;
+  background: var(--sheet);
+  border: 1px solid var(--rule);
+  border-radius: 18px;
+  box-shadow: 0 1px 2px rgba(14, 100, 189, 0.06), 0 16px 30px -18px rgba(14, 100, 189, 0.35);
+  margin-bottom: 1.6rem;
+}
+.landing .hero-logo-badge-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+.landing .hero-title {
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: clamp(2.1rem, 1.5rem + 2.6vw, 3.6rem);
+  line-height: 1.08;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+  margin: 0;
+  max-width: 26ch;
+  text-wrap: balance;
+}
+.landing .hero-lede {
+  font-size: clamp(1.02rem, 0.96rem + 0.4vw, 1.18rem);
+  line-height: 1.6;
+  color: var(--ink-soft);
+  max-width: 52ch;
+  margin: 1.4rem 0 0;
+}
+.landing .hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem 1.5rem;
+  margin-top: 2.2rem;
+}
+
+/* Buttons ---------------------------------------------------- */
+.landing .btn-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.9rem 1.5rem;
+  font-family: var(--body);
+  font-size: 1rem;
+  font-weight: 600;
+  color: #fff;
+  background: var(--accent);
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  box-shadow: 0 1px 1px rgba(22, 33, 59, 0.06), 0 10px 22px -12px var(--accent);
+  transition: background 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease;
+  min-height: auto;
+}
+.landing .btn-primary:hover {
+  background: var(--accent-press);
+  transform: translateY(-2px);
+  box-shadow: 0 1px 1px rgba(22, 33, 59, 0.06), 0 16px 30px -14px var(--accent);
+}
+.landing .btn-primary:active { transform: translateY(0); }
+.landing .btn-primary svg { transition: transform 0.18s ease; }
+.landing .btn-primary:hover svg { transform: translateX(3px); }
+.landing .btn-primary-lg { padding: 1.05rem 1.9rem; font-size: 1.08rem; }
+
+.landing .btn-quiet {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--body);
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--ink);
+  text-decoration: none;
+  padding: 0.4rem 0.1rem;
+  border-bottom: 2px solid var(--accent);
+  transition: color 0.18s ease, border-color 0.18s ease;
+}
+.landing .btn-quiet:hover { color: var(--accent); }
+
+/* Stat strip — mono spec line ------------------------------- */
+.landing .stat-strip {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0;
+  margin: clamp(2.5rem, 5vw, 3.5rem) 0 0;
+  border-top: 1px solid var(--rule);
+  padding-top: 1.4rem;
+  width: 100%;
+}
+.landing .stat {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0 clamp(1rem, 3vw, 2.2rem);
+  border-left: 1px solid var(--rule);
+}
+.landing .stat:first-child { padding-left: 0; border-left: none; }
+.landing .stat dt {
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.landing .stat dd {
+  margin: 0;
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: 1.15rem;
+  color: var(--ink);
+}
+
+/* ============================================================
+   Section heads
+   ============================================================ */
+.landing .section-head { margin-bottom: clamp(2rem, 4vw, 3rem); }
+.landing .section-title {
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: clamp(1.9rem, 1.2rem + 2.4vw, 3rem);
+  line-height: 1.02;
+  letter-spacing: -0.025em;
+  color: var(--ink);
+  margin: 0.9rem 0 0;
+}
+
+/* ============================================================
+   Capabilities — the kit
+   ============================================================ */
+.landing .cap-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: clamp(1rem, 2vw, 1.4rem);
+}
+.landing .cap {
+  display: flex;
+  flex-direction: column;
+  padding: clamp(1.5rem, 2.5vw, 2rem);
+  background: var(--sheet);
+  border: 1px solid var(--rule);
+  border-radius: 12px;
+  box-shadow: 0 1px 2px rgba(22, 33, 59, 0.04), 0 14px 30px -22px rgba(22, 33, 59, 0.5);
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+}
+.landing .cap:hover {
+  transform: translateY(-3px);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--rule));
+  box-shadow: 0 2px 4px rgba(22, 33, 59, 0.05), 0 22px 40px -24px rgba(22, 33, 59, 0.55);
+}
+.landing .cap-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1.3rem;
+}
+.landing .cap-kicker {
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--accent-press);
+}
+.landing .cap-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: 9px;
+}
+.landing .cap-title {
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: 1.32rem;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  margin: 0 0 0.55rem;
+}
+.landing .cap-desc {
+  font-size: 0.98rem;
+  line-height: 1.58;
+  color: var(--ink-soft);
+  margin: 0;
+}
+
+/* ============================================================
+   Run of show — a real ordered sequence
+   ============================================================ */
+.landing .run {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.landing .run-item {
+  display: grid;
+  grid-template-columns: minmax(88px, 140px) 1fr;
+  gap: clamp(1rem, 4vw, 3rem);
+  padding: clamp(1.6rem, 3vw, 2.4rem) 0;
+  border-top: 1px solid var(--rule);
+  align-items: start;
+}
+.landing .run-item:first-child { border-top: none; padding-top: 0; }
+.landing .run-num {
+  font-family: var(--display);
+  font-weight: 800;
+  font-size: clamp(2.5rem, 1.5rem + 3vw, 4rem);
+  line-height: 1;
+  letter-spacing: -0.04em;
+  color: var(--ink);
+  -webkit-text-stroke: 0;
+}
+.landing .run-item:not(:first-child) .run-num { color: var(--ink-faint); }
+.landing .run-body { padding-top: 0.35rem; }
+.landing .run-title {
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: clamp(1.3rem, 1.1rem + 0.8vw, 1.7rem);
+  letter-spacing: -0.015em;
+  color: var(--ink);
+  margin: 0 0 0.55rem;
+}
+.landing .run-desc {
+  font-size: 1.02rem;
+  line-height: 1.6;
+  color: var(--ink-soft);
+  margin: 0;
+  max-width: 60ch;
+}
+
+/* ============================================================
+   CTA — house lights down (full-bleed night band)
+   ============================================================ */
+.landing-cta {
+  background: var(--night);
+  padding: clamp(3.5rem, 8vw, 6rem) 0;
+}
+.landing .cta-inner { text-align: center; }
+.landing .cta-title {
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: clamp(2rem, 1.3rem + 2.8vw, 3.2rem);
+  line-height: 1.03;
+  letter-spacing: -0.03em;
+  color: #eaf4ff;
+  margin: 1.1rem auto 2rem;
+  max-width: 20ch;
+  text-wrap: balance;
+}
+.landing-cta .doc-label,
+.landing .hero-copy .doc-label { justify-content: center; }
+
+/* ============================================================
+   Footer
+   ============================================================ */
+.landing-footer {
+  border-top: 1px solid var(--rule);
+  padding: 1.6rem 0;
+}
+.landing .footer-inner {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.landing-wordmark-sm { font-size: 1.15rem; }
+.landing .footer-note {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+/* ============================================================
+   Load reveal — quiet, staggered (one orchestrated moment)
+   ============================================================ */
+@keyframes rise {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.landing .hero-copy > * { animation: rise 0.7s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.landing .hero-copy > :nth-child(1) { animation-delay: 0.02s; }
+.landing .hero-copy > :nth-child(2) { animation-delay: 0.08s; }
+.landing .hero-copy > :nth-child(3) { animation-delay: 0.16s; }
+.landing .hero-copy > :nth-child(4) { animation-delay: 0.24s; }
+.landing .hero-copy > :nth-child(5) { animation-delay: 0.32s; }
+.landing .hero-copy > :nth-child(6) { animation-delay: 0.4s; }
+
+/* ============================================================
+   Quality floor — focus, motion, responsive
+   ============================================================ */
+.landing a:focus-visible,
+.landing button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+@media (max-width: 720px) {
+  .landing .cap-grid { grid-template-columns: 1fr; }
+  .landing-nav { display: none; }
+  .landing .run-item { grid-template-columns: 1fr; gap: 0.5rem; }
+  .landing .run-num { font-size: 2.4rem; }
+  .landing .stat-strip { display: grid; grid-template-columns: 1fr 1fr; gap: 1.3rem 1.1rem; }
+  .landing .stat, .landing .stat:first-child { border-left: none; padding: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .landing * { animation: none !important; }
+  .landing *,
+  .landing *::before,
+  .landing *::after { transition-duration: 0.01ms !important; }
+}
