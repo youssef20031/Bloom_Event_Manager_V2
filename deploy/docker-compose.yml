@@ -94,18 +94,21 @@ services:
     restart: unless-stopped
     ports:
       - "9092:9092"
+      - "29092:29092"
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
-      # Empty host, not 0.0.0.0. In KRaft the controller listener's bind address
-      # is also validated as an advertised address, and Kafka rejects the
-      # nonroutable meta-address 0.0.0.0 there ("advertised.listeners cannot use
-      # the nonroutable meta-address"). An empty host binds all interfaces and
-      # advertises the hostname, which is what the image's own default does.
-      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      # Dual listeners since Phase 5: PLAINTEXT for other containers on the
+      # Compose network (kafka:9092), PLAINTEXT_HOST for the host machine
+      # (localhost:29092, for IDE-run services). Kafka rejects the
+      # nonroutable meta-address 0.0.0.0 in KAFKA_ADVERTISED_LISTENERS
+      # ("advertised.listeners cannot use the nonroutable meta-address"), so
+      # each listener advertises a real, reachable hostname there instead.
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,PLAINTEXT_HOST://0.0.0.0:29092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
@@ -136,6 +139,154 @@ services:
       timeout: 5s
       retries: 5
       start_period: 15s
+
+  # ── platform ────────────────────────────────────────────────────────────
+  config-server:
+    build: { context: .., dockerfile: deploy/Dockerfile.service, args: { MODULE_PATH: infrastructure/config-server } }
+    profiles: ["platform"]
+    environment:
+      CONFIG_REPO: file:/config-repo
+    volumes:
+      - ../config-repo:/config-repo:ro
+    ports: ["8888:8888"]
+    mem_limit: 512m
+    healthcheck: &java-health
+      test: ["CMD", "curl", "-fsS", "http://localhost:8888/actuator/health/readiness"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 40s
+
+  discovery-server:
+    build: { context: .., dockerfile: deploy/Dockerfile.service, args: { MODULE_PATH: infrastructure/discovery-server } }
+    profiles: ["platform"]
+    environment:
+      EUREKA_HOSTNAME: discovery-server
+    ports: ["8761:8761"]
+    mem_limit: 512m
+    healthcheck:
+      <<: *java-health
+      test: ["CMD", "curl", "-fsS", "http://localhost:8761/actuator/health/readiness"]
+
+  api-gateway:
+    build: { context: .., dockerfile: deploy/Dockerfile.service, args: { MODULE_PATH: infrastructure/api-gateway } }
+    profiles: ["platform"]
+    environment: &platform-env
+      CONFIG_SERVER_URL: http://config-server:8888
+      EUREKA_URL: http://discovery-server:8761/eureka/
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      ZIPKIN_ENDPOINT: http://zipkin:9411/api/v2/spans
+      JWT_JWKS_URI: http://api-gateway:8080/.well-known/jwks.json
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN}
+      APP_AUTH_USER: ${APP_AUTH_USER}
+      APP_AUTH_PASSWORD: ${APP_AUTH_PASSWORD}
+      JWT_PRIVATE_KEY_PEM: ${JWT_PRIVATE_KEY_PEM:-}
+      JWT_PUBLIC_KEY_PEM: ${JWT_PUBLIC_KEY_PEM:-}
+    ports: ["8080:8080"]
+    depends_on:
+      config-server: { condition: service_healthy }
+      discovery-server: { condition: service_healthy }
+    mem_limit: 512m
+    healthcheck:
+      <<: *java-health
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/actuator/health/readiness"]
+
+  # ── apps ────────────────────────────────────────────────────────────────
+  ai-service:
+    build: { context: .., dockerfile: deploy/Dockerfile.service, args: { MODULE_PATH: services/ai-service } }
+    profiles: ["apps"]
+    environment:
+      <<: *platform-env
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      REDIS_URL: redis://redis:6379
+    depends_on: { api-gateway: { condition: service_healthy }, redis: { condition: service_healthy } }
+    mem_limit: 512m
+    healthcheck:
+      <<: *java-health
+      test: ["CMD", "curl", "-fsS", "http://localhost:8081/actuator/health/readiness"]
+
+  knowledge-service:
+    build: { context: .., dockerfile: deploy/Dockerfile.service, args: { MODULE_PATH: services/knowledge-service } }
+    profiles: ["apps"]
+    environment:
+      <<: *platform-env
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: ${NEO4J_USER:-neo4j}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-password}
+    depends_on: { api-gateway: { condition: service_healthy }, neo4j: { condition: service_healthy }, kafka: { condition: service_healthy } }
+    mem_limit: 512m
+    healthcheck:
+      <<: *java-health
+      test: ["CMD", "curl", "-fsS", "http://localhost:8082/actuator/health/readiness"]
+
+  ingestion-service:
+    build: { context: .., dockerfile: services/ingestion-service/Dockerfile }
+    profiles: ["apps"]
+    environment:
+      <<: *platform-env
+      PDF_DIRECTORY: /data/pdfs
+    volumes:
+      - ${PDF_DIRECTORY:-./pdfs}:/data/pdfs:ro
+    depends_on: { api-gateway: { condition: service_healthy }, kafka: { condition: service_healthy } }
+    mem_limit: 768m
+    healthcheck:
+      <<: *java-health
+      test: ["CMD", "curl", "-fsS", "http://localhost:8083/actuator/health/readiness"]
+
+  retrieval-service:
+    build: { context: .., dockerfile: deploy/Dockerfile.service, args: { MODULE_PATH: services/retrieval-service } }
+    profiles: ["apps"]
+    environment: *platform-env
+    depends_on: { api-gateway: { condition: service_healthy } }
+    mem_limit: 512m
+    healthcheck:
+      <<: *java-health
+      test: ["CMD", "curl", "-fsS", "http://localhost:8084/actuator/health/readiness"]
+
+  chat-service:
+    build: { context: .., dockerfile: deploy/Dockerfile.service, args: { MODULE_PATH: services/chat-service } }
+    profiles: ["apps"]
+    environment:
+      <<: *platform-env
+      MONGO_URI: mongodb://mongodb:27017
+    depends_on: { api-gateway: { condition: service_healthy }, mongodb: { condition: service_healthy } }
+    mem_limit: 512m
+    healthcheck:
+      <<: *java-health
+      test: ["CMD", "curl", "-fsS", "http://localhost:8085/actuator/health/readiness"]
+
+  storage-service:
+    build: { context: .., dockerfile: deploy/Dockerfile.service, args: { MODULE_PATH: services/storage-service } }
+    profiles: ["apps"]
+    environment:
+      <<: *platform-env
+      MONGO_URI: mongodb://mongodb:27017
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GOOGLE_DRIVE_FOLDER_ID: ${GOOGLE_DRIVE_FOLDER_ID:-}
+      GOOGLE_OAUTH_REDIRECT_URI: http://localhost:8080/api/rag/auth/google/callback
+      FRONTEND_URL: http://localhost:3000
+    depends_on: { api-gateway: { condition: service_healthy }, mongodb: { condition: service_healthy }, kafka: { condition: service_healthy } }
+    mem_limit: 512m
+    healthcheck:
+      <<: *java-health
+      test: ["CMD", "curl", "-fsS", "http://localhost:8086/actuator/health/readiness"]
+
+  proposal-service:
+    build: { context: .., dockerfile: deploy/Dockerfile.service, args: { MODULE_PATH: services/proposal-service } }
+    profiles: ["apps"]
+    environment: *platform-env
+    depends_on: { api-gateway: { condition: service_healthy } }
+    mem_limit: 512m
+    healthcheck:
+      <<: *java-health
+      test: ["CMD", "curl", "-fsS", "http://localhost:8087/actuator/health/readiness"]
+
+  frontend:
+    build: { context: ../frontend }
+    profiles: ["apps"]
+    ports: ["3000:80"]
+    depends_on: { api-gateway: { condition: service_healthy } }
 
 volumes:
   neo4j-data:
