@@ -1,0 +1,20 @@
+# The service images build with the repository root as their context:
+# deploy/Dockerfile.service COPYs pom.xml, mvnw, .mvn, platform, infrastructure
+# and services, then runs mvn package inside the image. Without this file each of
+# the eleven builds ships 1.1 GB to the daemon -- 876 MB of it host target/
+# directories the in-container build regenerates anyway, and Windows-built ones at
+# that.
+.git
+**/target
+**/node_modules
+
+# Not copied by deploy/Dockerfile.service. The frontend image builds from its own
+# context (frontend/) and keeps its own .dockerignore for the same reason.
+frontend
+
+# Documentation, IDE and tooling state -- no build step reads these.
+docs
+.idea
+.claude
+.superpowers
+Claude outputs
