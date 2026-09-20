@@ -23,6 +23,8 @@ public record StorageProperties(
         @DefaultValue("http://localhost:8080/api/rag/auth/google/callback") String redirectUri,
         @DefaultValue("") String rootFolderId,
         @DefaultValue("300000") @Min(10_000) long syncIntervalMs,
+        /** Delay before the first poll at boot, so Eureka registration can finish. */
+        @DefaultValue("60000") @Min(0) long syncInitialDelayMs,
         @DefaultValue("http://localhost:5173") String frontendUrl,
         @DefaultValue({ "https://www.googleapis.com/auth/drive.readonly",
                 "https://www.googleapis.com/auth/drive.file" }) List<String> scopes,

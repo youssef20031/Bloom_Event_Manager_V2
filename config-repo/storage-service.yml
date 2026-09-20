@@ -35,6 +35,10 @@ bloom:
     redirect-uri: ${GOOGLE_OAUTH_REDIRECT_URI:http://localhost:8080/api/rag/auth/google/callback}
     root-folder-id: ${GOOGLE_DRIVE_FOLDER_ID:}
     sync-interval-ms: ${DRIVE_SYNC_INTERVAL_MS:300000}
+    # The first poll at boot waits this long, so Feign can resolve
+    # knowledge-service through Eureka before the sync needs it. Zero polls
+    # immediately, which is what an operator turning auto-sync on by hand gets.
+    sync-initial-delay-ms: ${DRIVE_SYNC_INITIAL_DELAY_MS:60000}
     frontend-url: ${FRONTEND_URL:http://localhost:5173}
 
 management:
