@@ -1056,9 +1056,47 @@ gateway was restarted to pick up the tracing fix.
   correct credentials `200`. Previously only the direct `POST` had been
   exercised.
 
+### Google Drive, verified live
+
+The stored grant refreshed against Google during this run — the access token's
+`expiry_date` was one hour ahead of an `updatedAt` written the same afternoon, so
+a fresh token was minted through the refresh flow, not replayed. A manual sync
+then listed the real folder:
+
+```
+{"status":"success","filesQueued":0,"filesSeen":24}
+{"status":"idle","lastResult":{"filesQueued":0,"filesSeen":24,"errors":[]}}
+```
+
+**24 files seen, zero errors**, through the containerised stack. Drive
+authentication, token refresh and the list call all work; what remains undriven
+is only the interactive consent *screen*, since the grant behind it already
+exists.
+
+### A boot-time race in auto-sync
+
+`DriveStartup` starts the scheduler as an `ApplicationRunner`, and
+`scheduleWithFixedDelay(task, Duration)` runs the first poll immediately — nine
+seconds after boot, against a `knowledge-service` that Eureka registration and
+the client's first cache refresh have not yet made resolvable. Every cold start
+with a stored token therefore failed its first sync, opened the breaker, and left
+the Settings page reading `error` until the next poll five minutes later.
+
+Auto-sync now takes an initial delay (`sync-initial-delay-ms`, default 60s) at
+boot, while an operator turning it on by hand still polls immediately, because
+by then the stack is up. Covered by `AutoSyncSchedulerTest`, verified red-green:
+with the delay ignored the first-poll test fails and the operator-start test
+still passes.
+
+One thing this did *not* turn out to be: the two failure messages are correctly
+attributed. `knowledge-service unavailable` and `Google Drive list files
+unavailable` each name their own cause, and an early reading that merged them
+into one misattributed chain was wrong.
+
 ### Still not verified
 
-- **Google Drive OAuth consent.** Needs a real Google grant.
+- **The Google consent screen itself.** Completing a fresh grant needs a human at
+  the browser; the existing grant is live and exercised above.
 
 ## Repository layout
 
