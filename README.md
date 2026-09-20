@@ -945,18 +945,98 @@ probes read.
 
 ### Not verified
 
-- **The full Compose stack.** All eleven images build, and
-  `docker compose config` renders sixteen services with every healthcheck port
-  matching its own service. The containers were not brought up: the Config
-  Server bind-mounts `config-repo`, and this machine's Docker Desktop File
-  Sharing does not include the drive. Phase 6 removes the mount by moving the
-  Config Server to a git backend.
+- **The full Compose stack.** Not brought up on 2026-09-17; done on 2026-09-20,
+  see the re-verification below. Bringing it up is what exposed the tracing
+  defect, and nothing else would have.
 - **The login form's own submit handler.** The `POST /api/v1/auth/login` round
   trip and the authenticated app were both verified, the latter by seeding the
   `bloom.token` value that a successful login writes.
 - **Google Drive OAuth.** Completing the consent flow needs a real Google grant.
   The Kafka-crossing trace was obtained through the local PDF ingest path, which
   drives the same topics and listeners.
+
+## Phase 5 re-verification (2026-09-20)
+
+Re-run with Docker available, and with the Compose stack actually brought up for
+the first time.
+
+`./mvnw clean install` — BUILD SUCCESS across sixteen reactor projects:
+**355 tests, 0 failures, 0 errors, 0 skipped**, aggregated over 87 surefire
+reports. An earlier run the same day with Docker stopped gave 355/0/0/**30** —
+the thirty being exactly the eight Testcontainers classes. Worth knowing which
+number you are looking at.
+
+### The stack, up
+
+`docker compose --profile infra --profile platform --profile apps up -d` →
+exit 0, **16/16 containers running, 15/15 healthy**. The sixteenth, `frontend`,
+declares no healthcheck, so it reports `Up` and never `healthy`; the exit
+criterion's "fifteen containers" undercounts the stack by one.
+
+| Criterion | Evidence |
+| --- | --- |
+| Anonymous request | `GET /api/v1/rag/ping` → `401` |
+| Authenticated request | Same path with a Bearer token → `200 {"service":"knowledge-service","status":"ok"}` |
+| Tampered token | One character appended → `401` |
+| Forged internal token | `X-Internal-Token: forged-value` → `401` |
+| **Real internal token, replayed from outside** | The genuine value from `.env`, sent from the host → `401`. The gateway strips the header on ingress, so knowing the secret does not help an external caller |
+| Bad credentials | `401` |
+| JWKS | One RSA key, `use=sig`, `kid` present, no `d`/`p`/`q`/`dp`/`dq`/`qi` |
+| Eureka | **8 registrations, all `UP`** |
+| SPA on nginx `:3000` | `200` — the containerised path, never exercised before |
+| Zipkin | `200`, and after the fix below, all eight services reporting |
+| Reference trace | One request → a single **12-span trace across api-gateway and knowledge-service**, security filter chain spans included |
+
+### The defect that only the containers could expose
+
+**Tracing was silently dead in every container.** Spring Boot 4 renamed
+`management.zipkin.tracing.endpoint` to `management.tracing.export.zipkin.endpoint`
+and deprecated the old name at `level=error`, which drops the key without a
+warning. Every service therefore fell back to the built-in default,
+`http://localhost:9411/api/v2/spans`.
+
+On the host that default *is* Zipkin, which is why the 2026-09-17 evidence —
+48 spans across 6 services — was real and yet proved nothing about the
+deployment target. In containers each service posted its spans to its own empty
+localhost. Zipkin held zero traces and listed zero services, while the services
+logged `Dropped 5 spans due to ConnectException()` once at WARN and everything
+after at FINE, which is why the logs looked quiet.
+
+The chain that settled it, after `ZIPKIN_ENDPOINT` was confirmed set in every
+container, config fetched, and `curl http://zipkin:9411` returning `200` from
+inside the failing service: a thread dump named the target outright —
+`AsyncReporter{ZipkinHttpClientSender{http://localhost:9411/api/v2/spans}}` —
+and setting the property directly by environment variable did not move it, which
+ruled out placeholder resolution and left the property name itself.
+
+### Two more things the bring-up found
+
+**A second host bind-mount.** `ingestion-service` mounts
+`${PDF_DIRECTORY:-./pdfs}:/data/pdfs:ro`, which `.env` points at
+`deploy/ISM_PDF`. The first bring-up aborted on it and left all seventeen
+containers stopped. The directory is empty and untracked — Docker created it as
+a side effect of the failed mount — so a fresh clone has nothing to ingest.
+
+**The images under test were stale.** They had been built 2026-09-17 14:51–14:54,
+40 minutes *before* the phase's own final commit at 15:34. Verification ran
+against images that predated the code it was verifying. Rebuild before verifying.
+
+### Deviation in this run
+
+Docker Desktop File Sharing excludes this drive, so neither bind-mount could be
+used. Both were redirected to named volumes — `config-repo` seeded by
+`docker cp`, the PDF directory left empty to match the empty host directory —
+via a throwaway override. The config-server image, the container paths and the
+`:ro` flags are identical to the committed ones; only the mount source differs.
+`docker compose config` over the merged files reports **0 host binds**. Phase 6
+removes the config-repo mount for real by moving the Config Server to a git
+backend.
+
+### Still not verified
+
+- **Google Drive OAuth consent.** Needs a real Google grant.
+- **The login form's own submit handler.** The login round trip and the
+  authenticated app are both verified; the form itself is not driven.
 
 ## Repository layout
 
