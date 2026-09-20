@@ -1032,11 +1032,33 @@ via a throwaway override. The config-server image, the container paths and the
 removes the config-repo mount for real by moving the Config Server to a git
 backend.
 
+### A third defect, found by actually using the site
+
+**A gateway restart 502s the whole SPA.** nginx resolves a literal hostname in
+`proxy_pass` once, at worker start, and holds that address for the worker's life.
+Recreating `api-gateway` moves it to a new IP, and every API call then fails with
+`connect() failed (111: Connection refused)` against the dead address until the
+frontend is restarted too. Compose hides it — `depends_on: service_healthy` means
+a cold boot always resolves correctly — so only restarting the gateway on its own
+reveals it, which neither verification run had done.
+
+Fixed with Docker's embedded resolver plus a variable in `proxy_pass`, which is
+what forces re-resolution. Verified by moving the gateway off the cached address
+and parking a decoy container on it: three logins through `:3000` returned `200`
+with the gateway on `.18` and `.9` held by the decoy, nginx silent. The red half
+came from a browser: a real `502` against the stale `172.19.0.9` after the
+gateway was restarted to pick up the tracing fix.
+
+### Now verified
+
+- **The login form's own submit handler.** Driven from a browser against the
+  containerised stack: a mistyped password returned `401` through the form, and
+  correct credentials `200`. Previously only the direct `POST` had been
+  exercised.
+
 ### Still not verified
 
 - **Google Drive OAuth consent.** Needs a real Google grant.
-- **The login form's own submit handler.** The login round trip and the
-  authenticated app are both verified; the form itself is not driven.
 
 ## Repository layout
 
