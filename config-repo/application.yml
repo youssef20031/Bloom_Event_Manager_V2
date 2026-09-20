@@ -61,9 +61,15 @@ management:
   tracing:
     sampling:
       probability: 1.0
-  zipkin:
-    tracing:
-      endpoint: ${ZIPKIN_ENDPOINT:http://localhost:9411/api/v2/spans}
+    # Boot 4 renamed management.zipkin.tracing.endpoint to
+    # management.tracing.export.zipkin.endpoint and deprecated the old name at
+    # level=error, which means it is dropped silently rather than warned about.
+    # Under the old key every service fell back to the built-in default,
+    # localhost:9411 -- correct when the JVMs run on the host, and wrong in every
+    # container, where it sent each service's spans to its own empty localhost.
+    export:
+      zipkin:
+        endpoint: ${ZIPKIN_ENDPOINT:http://localhost:9411/api/v2/spans}
   info:
     env:
       enabled: true
