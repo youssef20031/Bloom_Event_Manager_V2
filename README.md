@@ -639,14 +639,40 @@ export COMPOSE_FILE=deploy/docker-compose.yml COMPOSE_PROFILES=infra,platform,ap
    token → `200`.
 8. In `config-repo/retrieval-service.yml`, replace `topK: ${RAG_TOP_K:15}` with
    a literal such as `topK: 8`. Compose sets `RAG_TOP_K` on retrieval-service,
-   so editing only the default after the colon changes nothing. Then refresh
-   retrieval-service — no restart. `POST /actuator/refresh` needs
-   authentication (a JWT or `X-Internal-Token`), and retrieval's port is not
-   published, so the call is made from inside its container:
+   so editing only the default after the colon changes nothing.
+
+   Since Task 4, `config-repo/` is baked into the Config Server's image (see
+   "Three things that look like misconfiguration and are not"), so the edit on
+   its own does not reach it. Either sync it live with Compose Watch, left
+   running in another terminal —
 
    ```bash
-   docker compose exec retrieval-service sh -c \
-     'curl -fsS -X POST -H "X-Internal-Token: $INTERNAL_SERVICE_TOKEN" http://localhost:8084/actuator/refresh'
+   docker compose -f deploy/docker-compose.yml --profile platform watch --no-up config-server
+   ```
+
+   — or rebuild and recreate just that container (~3 s, only the last image
+   layer changes):
+
+   ```bash
+   docker compose -f deploy/docker-compose.yml --profile platform up -d --build --no-deps config-server
+   ```
+
+   Then refresh retrieval-service — no restart. `POST /actuator/refresh` needs
+   authentication (a JWT or `X-Internal-Token`; `INTERNAL_SERVICE_TOKEN` is no
+   longer in any service's environment as of Task 4, so a JWT from "Login and
+   security" is the credential to use here). Retrieval's port is not
+   published, so the call is made from inside its container; get the token on
+   the host first and pass it as a direct argument to `exec`, not through
+   `sh -c '…'`, so the host shell substitutes `$TOKEN` and the container never
+   needs to:
+
+   ```bash
+   TOKEN=$(curl -s -X POST http://localhost:8080/api/v1/auth/login \
+        -H 'Content-Type: application/json' \
+        -d '{"username": "'"$APP_AUTH_USER"'", "password": "'"$APP_AUTH_PASSWORD"'"}' \
+        | jq -r '.token')
+   docker compose exec retrieval-service curl -fsS -X POST \
+     -H "Authorization: Bearer $TOKEN" http://localhost:8084/actuator/refresh
    ```
 
    It answers with the keys that changed, `["bloom.retrieval.topK"]`. A value
