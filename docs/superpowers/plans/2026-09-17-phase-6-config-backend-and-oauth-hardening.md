@@ -4,7 +4,7 @@
 
 **Goal:** Move the Config Server off its filesystem `native` backend onto a git backend with encrypted secrets, and close the OAuth CSRF hole that lets an attacker bind their own Google account as the fleet's Drive identity.
 
-**Architecture:** The Config Server keeps serving the same properties on the same port; only its backend changes, from `spring.profiles.active=native` reading `./config-repo` to a git repository read over HTTPS. That removes the host bind-mount Compose currently needs, makes every config change versioned and reviewable, and — because git-backed config can carry `{cipher}` values — lets `INTERNAL_SERVICE_TOKEN` and the Google client secret live in config instead of in each deployment's environment. Separately, storage-service's Google OAuth flow gains a `state` nonce: `authUrl()` mints one, stores it, and the callback rejects any `code` that does not arrive with a matching, unexpired nonce.
+**Architecture:** The Config Server keeps serving the same properties on the same port; only its backend changes, from `spring.profiles.active=native` reading `./config-repo` to a git repository read over HTTPS. That removes the Config Server's host bind-mount (Task 5 also moves ingestion-service's PDF mount to a named volume, the other one Compose needs), makes every config change versioned and reviewable, and — because git-backed config can carry `{cipher}` values — lets `INTERNAL_SERVICE_TOKEN` and the Google client secret live in config instead of in each deployment's environment. Separately, storage-service's Google OAuth flow gains a `state` nonce: `authUrl()` mints one, stores it, and the callback rejects any `code` that does not arrive with a matching, unexpired nonce.
 
 **Tech Stack:** Spring Cloud Config Server 5.0.x (git backend, `spring-cloud-config-server`), Spring Cloud Config encryption (`{cipher}`, JCE unlimited-strength), Spring Boot 4.0.8, Java 25, MongoDB (nonce store, reusing storage-service's existing `tokendb`).
 
@@ -38,7 +38,7 @@ services/storage-service/
   .../config/StorageProperties.java                    MODIFY: stateTtlMs
   test: OAuthStateStoreTest, AuthControllerStateTest, DriveAuthManagerStateTest
 config-repo/                                           MOVED to its own git repository
-deploy/docker-compose.yml                              MODIFY: drop the bind mount, add git env
+deploy/docker-compose.yml                              MODIFY: drop both host bind mounts (config-repo, PDFs), add git env
 README.md                                              MODIFY: git backend setup, encryption, deviations
 ```
 
@@ -497,7 +497,9 @@ spring:
           password: ${CONFIG_GIT_PASSWORD:}
           clone-on-start: true
           timeout: 10
-          # Pick up pushes without a restart; clients still need /actuator/refresh.
+          # The Config Server fetches from git at most every 30 s, so pushes are
+          # picked up without restarting it. A client still needs its own
+          # POST /actuator/refresh, authenticated with a JWT or X-Internal-Token.
           refresh-rate: 30
 ```
 
@@ -615,10 +617,11 @@ git commit -m "feat(config): encrypt shared secrets with {cipher}, leaving only 
 
 **Files:**
 - Modify: `deploy/docker-compose.yml`
+- Modify: `deploy/.env.example`
 - Delete: `config-repo/` (after Task 3 proves the git backend serves the same values)
 - Modify: `README.md`
 
-This is the payoff for the whole phase: the Config Server stops needing a host path, which is what blocked Phase 5's full-stack Compose verification on a machine whose Docker file sharing did not include the drive.
+This is the payoff for the whole phase: Compose stops needing any host path, which is what blocked Phase 5's full-stack Compose verification on a machine whose Docker file sharing did not include the drive. There are two to remove, not one: the Config Server's `../config-repo` mount, and ingestion-service's `${PDF_DIRECTORY:-./pdfs}:/data/pdfs:ro`. Removing only the first leaves Compose needing file sharing, and the exit criterion below still fails.
 
 - [ ] **Step 1: Replace the mount with git configuration**
 
@@ -636,8 +639,16 @@ In `deploy/docker-compose.yml`, the `config-server` service:
       CONFIG_GIT_USERNAME: ${CONFIG_GIT_USERNAME:-}
       CONFIG_GIT_PASSWORD: ${CONFIG_GIT_PASSWORD:-}
       ENCRYPT_KEY: ${ENCRYPT_KEY}
+      ZIPKIN_ENDPOINT: http://zipkin:9411/api/v2/spans
     ports: ["127.0.0.1:8888:8888"]
     mem_limit: 512m
+    # Unchanged. Keep the anchor: every other Java service merges *java-health.
+    healthcheck: &java-health
+      test: ["CMD", "curl", "-fsS", "http://localhost:8888/actuator/health/readiness"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 40s
 ```
 
 Remove the `volumes:` block entirely.
@@ -652,25 +663,60 @@ CONFIG_GIT_PASSWORD=
 ENCRYPT_KEY=
 ```
 
-- [ ] **Step 2: Verify the full stack**
+- [ ] **Step 2: Replace ingestion-service's PDF bind mount with a named volume**
+
+`ingestion-service` reads the PDFs for the local ingest path (`POST /api/v1/rag/ingest`) from `/data/pdfs`. Keep that container path and the `:ro` flag; change only the source, from a host directory to a named volume:
+
+```yaml
+  ingestion-service:
+    # build, profiles, environment, depends_on, mem_limit, healthcheck: unchanged
+    volumes:
+      # A named volume, not a host path: nothing from the host is shared into
+      # the container, so no Docker file-sharing configuration is needed.
+      - ingest-pdfs:/data/pdfs:ro
+```
+
+and declare it with the other named volumes at the bottom of the file:
+
+```yaml
+volumes:
+  # ...existing volumes unchanged...
+  ingest-pdfs:
+```
+
+Remove `PDF_DIRECTORY=./pdfs` from `deploy/.env.example`: in Compose it only ever named the host directory to mount. `PDF_DIRECTORY` itself stays in `config-repo/ingestion-service.yml` for IDE runs, and the container keeps its literal `PDF_DIRECTORY: /data/pdfs`. Update the README's `PDF_DIRECTORY` row to match.
+
+Load PDFs into the volume through the Docker API, which streams a tar archive and needs no file sharing. `docker cp` refuses to write into a read-only mount (`mounted volume is marked read-only`), so copy through a short-lived helper that mounts the volume read-write, then ingest:
+
+```bash
+docker run -d --name bloom-pdf-loader -v bloom-v2_ingest-pdfs:/data/pdfs alpine sleep 300
+docker cp ./my-pdfs/. bloom-pdf-loader:/data/pdfs/
+docker rm -f bloom-pdf-loader
+curl -s -X POST http://localhost:8080/api/v1/rag/ingest -H "Authorization: Bearer $TOKEN"
+```
+
+`bloom-v2_ingest-pdfs` is Compose's `<project>_<volume>` name for the project `bloom-v2`. Drive-sourced PDFs never touch this volume: ingestion downloads those from storage-service. Document the loading commands in the README under "Running it".
+
+- [ ] **Step 3: Verify the full stack**
 
 ```bash
 docker compose -f deploy/docker-compose.yml --profile infra --profile platform --profile apps up -d --build
-docker compose -f deploy/docker-compose.yml ps
+docker compose -f deploy/docker-compose.yml --profile infra --profile platform --profile apps ps
+docker compose -f deploy/docker-compose.yml --profile infra --profile platform --profile apps config | grep -c "type: bind"
 ```
 
-Expected: all sixteen containers healthy within ~3 minutes, with no Docker Desktop file-sharing configuration required. This is the Phase 5 exit criterion that could not be demonstrated.
+Expected: all sixteen containers healthy within ~3 minutes — `frontend` included, since it now declares a healthcheck — with no Docker Desktop file-sharing configuration required, and `0` host binds. This is the Phase 5 exit criterion that could not be demonstrated.
 
-- [ ] **Step 3: Remove the filesystem config**
+- [ ] **Step 4: Remove the filesystem config**
 
 Once the stack is healthy on the git backend, delete `config-repo/` from this repository — leaving it invites edits that silently do nothing, since the Config Server no longer reads it. The `native` profile from Task 3 still works against an external checkout via `CONFIG_REPO`.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add deploy/docker-compose.yml deploy/.env.example README.md
 git rm -r config-repo
-git commit -m "chore(deploy): Config Server reads git, so Compose needs no host mount"
+git commit -m "chore(deploy): Config Server reads git and PDFs live in a volume, so Compose needs no host mount"
 ```
 
 ---
@@ -682,7 +728,7 @@ git commit -m "chore(deploy): Config Server reads git, so Compose needs no host 
 - [ ] The Config Server serves every property from a git repository, with the commit SHA visible as the document `version`
 - [ ] `SPRING_PROFILES_ACTIVE=native` still serves from a filesystem checkout, for offline work
 - [ ] `INTERNAL_SERVICE_TOKEN` and `GOOGLE_CLIENT_SECRET` are `{cipher}` ciphertext in the config repository; `ENCRYPT_KEY` is the only shared secret left in the environment
-- [ ] `docker compose --profile infra --profile platform --profile apps up -d --build` brings up all sixteen containers healthy **with no Docker file-sharing configuration**
+- [ ] `docker compose --profile infra --profile platform --profile apps up -d --build` brings up all sixteen containers healthy, `frontend` included, **with no Docker file-sharing configuration** — neither the config-repo mount nor the PDF mount remains
 - [ ] `./mvnw clean install` passes with no skipped tests
 - [ ] No plaintext secret anywhere in either repository
 
@@ -690,5 +736,6 @@ git commit -m "chore(deploy): Config Server reads git, so Compose needs no host 
 
 - No per-user accounts — still one shared login, as V1 had
 - No asymmetric config encryption (a keystore); the symmetric `ENCRYPT_KEY` is enough for one deployment
-- No automatic `/actuator/refresh` fan-out on a config push — clients are still refreshed deliberately
+- No automatic `/actuator/refresh` fan-out on a config push — each client is still refreshed deliberately, with an authenticated `POST /actuator/refresh`
+- No authentication on Eureka — `discovery-server` still accepts anonymous registrations, mitigated only by Compose binding 8761 to `127.0.0.1`; HTTP Basic on the registry, with credentials in every client's `defaultZone`, is the follow-up
 - No Kubernetes; Compose remains the deployment target

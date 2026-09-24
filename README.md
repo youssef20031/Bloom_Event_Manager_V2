@@ -22,35 +22,45 @@ flowchart LR
   GW --> RET[retrieval-service :8084]
   GW --> STOR[storage-service :8086]
   GW --> ING[ingestion-service :8083]
+  GW -->|/api/v1/rag/ping| KNOW[knowledge-service :8082]
   CHAT --> RET
-  PROP --> RET
-  PROP --> STOR
+  CHAT --> AI[ai-service :8081]
   CHAT --> STOR
-  RET --> AI[ai-service :8081]
-  RET --> KNOW[knowledge-service :8082]
-  CHAT --> AI
+  PROP --> CHAT
   PROP --> AI
   PROP --> KNOW
+  PROP --> STOR
+  RET --> AI
+  RET --> KNOW
   ING --> AI
+  ING --> KNOW
+  ING --> STOR
+  STOR --> KNOW
   AI --> GEM[(Gemini)]
   AI --> REDIS[(Redis)]
   KNOW --> NEO[(Neo4j)]
   CHAT --> MCHAT[(Mongo chatdb)]
   STOR --> MTOK[(Mongo tokendb)]
   STOR --> DRIVE[(Google Drive)]
-  STOR -.bloom.documents.discovered / deleted.-> K{{Kafka}}
-  K -.-> ING
-  ING -.bloom.chunks.batch-ready.-> K
-  K -.-> KNOW
-  KNOW -.bloom.documents.indexed.-> K
-  K -.-> STOR
+  STOR -.->|bloom.documents.discovered| K{{Kafka}}
+  STOR -.->|bloom.documents.deleted| K
+  ING -.->|bloom.chunks.batch-ready| K
+  KNOW -.->|bloom.documents.indexed| K
+  K -.->|discovered| ING
+  K -.->|batch-ready, deleted| KNOW
+  K -.->|indexed| STOR
   EUREKA[discovery-server :8761] --- GW
   CONFIG[config-server :8888] --- GW
   ZIP[Zipkin :9411] --- GW
 ```
 
-The gateway is the only public entry point. Ports below are the ones each
-service's own `config-repo/*.yml` sets; the Compose healthchecks in
+Between services, solid arrows are HTTP — the gateway's routes and every
+service-to-service `@FeignClient` — and dotted arrows are Kafka topics, from
+producer to consumer.
+
+The gateway is the only entry point for the API. In Compose, nginx on `:3000`
+serves the SPA and proxies `/api` and `/.well-known` to it. Ports below are the
+ones each service's own `config-repo/*.yml` sets; the Compose healthchecks in
 `deploy/docker-compose.yml` probe the same numbers.
 
 | Module | Port | Owns | Purpose |
@@ -131,6 +141,11 @@ the IDE run configuration at least `INTERNAL_SERVICE_TOKEN`, plus whatever that
 service needs — `GEMINI_API_KEY` for `ai-service`, `NEO4J_*` for
 `knowledge-service`, and so on.
 
+Start the Config Server before any service. Each service's `application.yml`
+imports `optional:configserver:…`, but `bloom.security.internal-token` is set
+only in `config-repo/application.yml`, so a service started without the Config
+Server fails at startup with a `BindValidationException` on that property.
+
 The SPA runs against the gateway through Vite's proxy:
 
 ```bash
@@ -151,9 +166,18 @@ three in `platform` (config-server, discovery-server, api-gateway) and eight in
 `apps` (the seven services plus the nginx-served SPA). The SPA is on
 <http://localhost:3000>, and nginx proxies `/api` and `/.well-known` to
 `api-gateway:8080` on the Compose network — the browser never learns the
-gateway's address. Every Java container's healthcheck probes its own
-`/actuator/health/readiness`, and the `apps` services wait on
-`api-gateway: service_healthy`.
+gateway's address. All sixteen declare a healthcheck and should report
+`healthy`: the five infra containers use each product's own probe, every Java
+container probes its own `/actuator/health/readiness`, and the frontend fetches
+`/` from nginx. The `apps` services wait on `api-gateway: service_healthy`.
+
+Give Docker at least 8 GB of memory, and more if images are built in the same
+session. The Java containers alone declare 5.25 GiB of `mem_limit`, and Kafka,
+Neo4j, Mongo and Zipkin are uncapped; at idle the stack sits near 3.7 GB. On
+2026-09-24 a 4 GB Docker Desktop VM ran the stack until an in-Docker Maven
+rebuild pushed it over: the OOM killer took ingestion-service, Kafka climbed to
+four cores, and the engine stopped answering `docker ps` until Docker Desktop
+was restarted with 12 GB.
 
 `ingestion-service` builds from its own `services/ingestion-service/Dockerfile`
 rather than the shared `deploy/Dockerfile.service`, because Tess4J loads
@@ -247,7 +271,8 @@ carries both:
 
 - **The caller's JWT.** `InternalTokenFeignInterceptor` copies the incoming
   `Authorization` header onto outbound Feign calls, so the original user's token
-  travels the whole chain and each hop validates it against the gateway's JWKS.
+  travels the chain and each hop validates it against the gateway's JWKS. One
+  hop is the exception; see below.
 - **`X-Internal-Token`.** A machine identity for hops that have no user at all —
   a Kafka-triggered call such as storage reacting to `bloom.documents.indexed`
   has no request to copy a header from.
@@ -255,10 +280,29 @@ carries both:
 Verified rather than assumed: restarting `retrieval-service` with a deliberately
 mismatched `INTERNAL_SERVICE_TOKEN` and then asking the Event Advisor a question
 still succeeds, which is only possible if the forwarded JWT is what authenticates
-the `chat -> retrieval` hop. The concern that `RequestContextHolder`, being a
-`ThreadLocal`, would be empty inside the circuit breaker's supplier does not
-apply here: with no bulkhead configured, Spring Cloud CircuitBreaker's
-Resilience4j implementation runs the supplier on the calling thread.
+the `chat -> retrieval` hop.
+
+The Feign call does not run on the request thread, and the JWT survives anyway.
+`Resilience4JCircuitBreakerFactory` gives every breaker an `ExecutorService`
+(`Executors.newCachedThreadPool()`) unless
+`spring.cloud.circuitbreaker.resilience4j.disableThreadPool` is set, which it is
+not here, and `Resilience4JCircuitBreaker.run` submits the supplier to that
+executor whether or not a bulkhead is configured. The header crosses the thread
+boundary because of Spring Cloud OpenFeign's
+`FeignCircuitBreakerInvocationHandler`: `asSupplier` captures
+`RequestContextHolder.getRequestAttributes()` on the calling thread, and the
+supplier re-installs them with `setRequestAttributes` when it runs on a
+different thread, then resets them. `InternalTokenFeignInterceptor` reads the
+`Authorization` header from those attributes. This was read from the bytecode
+of `spring-cloud-openfeign-core` and `spring-cloud-circuitbreaker-resilience4j`
+5.0.3, the versions Spring Cloud 2025.1.3 pins.
+
+The capture only works when the Feign call starts on a request thread. On
+retrieval's AI path (`useAI: true`), `RetrievalService.searchAll` submits the
+two knowledge searches to retrieval's own virtual-thread executor, which has no
+request attributes to capture, so those `retrieval -> knowledge` calls carry
+`X-Internal-Token` alone. Chat always sends `useAI: false`, and the plain path
+searches on the request thread.
 
 ### Generating the keys
 
@@ -290,17 +334,17 @@ Gateway and platform:
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `APP_AUTH_USER` | — (required) | The single login username |
-| `APP_AUTH_PASSWORD` | — (required) | The single login password |
-| `INTERNAL_SERVICE_TOKEN` | — (required, every service) | Shared `X-Internal-Token` value |
-| `JWT_PRIVATE_KEY_PEM` | blank | RS256 private key PEM; blank ⇒ ephemeral key |
-| `JWT_PUBLIC_KEY_PEM` | blank | Matching public key PEM |
-| `JWT_TTL` | `PT12H` | Token lifetime |
+| `APP_AUTH_USER` | — (required) | api-gateway only. The single login username |
+| `APP_AUTH_PASSWORD` | — (required) | api-gateway only. The single login password |
+| `INTERNAL_SERVICE_TOKEN` | — (required, gateway and every service) | Shared `X-Internal-Token` value |
+| `JWT_PRIVATE_KEY_PEM` | blank | api-gateway only. RS256 private key PEM; blank ⇒ ephemeral key |
+| `JWT_PUBLIC_KEY_PEM` | blank | api-gateway only. Matching public key PEM |
+| `JWT_TTL` | `PT12H` | api-gateway only. Token lifetime |
 | `JWT_JWKS_URI` | `http://localhost:8080/.well-known/jwks.json` | Where services fetch the public key |
 | `CONFIG_SERVER_URL` | `http://localhost:8888` | Config Server for `spring.config.import` |
-| `CONFIG_REPO` | `file:./config-repo` | Config Server's native search location |
+| `CONFIG_REPO` | `file:./config-repo` | config-server only. Its native search location |
 | `EUREKA_URL` | `http://localhost:8761/eureka/` | Registry |
-| `EUREKA_HOSTNAME` | `localhost` | The registry's own advertised hostname |
+| `EUREKA_HOSTNAME` | `localhost` | discovery-server only. The registry's own advertised hostname |
 | `KAFKA_BOOTSTRAP_SERVERS` | `localhost:29092` | `kafka:9092` inside Compose |
 | `ZIPKIN_ENDPOINT` | `http://localhost:9411/api/v2/spans` | Span collector |
 
@@ -328,7 +372,20 @@ Data stores and external services:
 | `GOOGLE_OAUTH_REDIRECT_URI` | `http://localhost:8080/api/rag/auth/google/callback` | storage-service — must match the Console |
 | `GOOGLE_DRIVE_FOLDER_ID` | blank | storage-service — the folder to sync |
 | `DRIVE_SYNC_INTERVAL_MS` | `300000` | storage-service auto-sync poll (minimum 10000) |
+| `DRIVE_SYNC_INITIAL_DELAY_MS` | `60000` | storage-service — wait before the first auto-sync poll at boot (minimum 0); see "What the poll does" |
 | `FRONTEND_URL` | `http://localhost:5173` | Where storage-service sends the browser after consent (`http://localhost:3000` in Compose) |
+
+In Compose each container receives only the variables it reads. The gateway
+alone gets `APP_AUTH_USER`, `APP_AUTH_PASSWORD`, `JWT_PRIVATE_KEY_PEM`,
+`JWT_PUBLIC_KEY_PEM` and `JWT_TTL`; the services validate tokens against the
+JWKS and never see the key pair or the login. The optional settings — `JWT_TTL`,
+`GEMINI_MODEL`, `GEMINI_FALLBACK_MODELS`, `GEMINI_EMBEDDING_MODEL`, `RAG_TOP_K`,
+`MONGO_CHAT_DB`, `MONGO_TOKEN_DB`, `DRIVE_SYNC_INTERVAL_MS` and
+`DRIVE_SYNC_INITIAL_DELAY_MS` — are passed from `deploy/.env` to the containers
+that read them, falling back to the application default when unset.
+`CACHE_KEY_PREFIX`, `CHUNK_SIZE`, `CHUNK_OVERLAP`, `TESSDATA_PATH` and
+`GOOGLE_CREDENTIALS_PATH` are not passed through, so in Compose they always take
+their defaults.
 
 ## Google Drive
 
@@ -365,8 +422,18 @@ auto-sync poll and sends the browser to `FRONTEND_URL/?auth=success` — or
 within one 30-second status poll.
 
 **What the poll does.** `AutoSyncScheduler` runs `DriveSyncService.autoSync`
-immediately and then every `DRIVE_SYNC_INTERVAL_MS` (default five minutes). It
-starts on a successful callback, and on startup when a token is already stored.
+and then repeats it every `DRIVE_SYNC_INTERVAL_MS` (default five minutes). When
+the first run happens depends on what started the scheduler:
+
+- **At boot, with a token already stored**, `DriveStartup` waits
+  `DRIVE_SYNC_INITIAL_DELAY_MS` (`bloom.storage.sync-initial-delay-ms`, default
+  60 seconds) before the first poll. Polling at once lost a race with Eureka:
+  knowledge-service was not yet resolvable, so the first sync failed and opened
+  the breaker. See "A boot-time race in auto-sync" below.
+- **After a successful OAuth callback, or `POST /api/v1/rag/sync/auto` with
+  `{"enabled": true}`**, the first poll runs immediately, because by then the
+  stack is up.
+
 Each run lists every PDF under `GOOGLE_DRIVE_FOLDER_ID` recursively and diffs it
 against the `driveFileId → modifiedTime` map that knowledge-service keeps on its
 `Document` nodes:
@@ -383,26 +450,107 @@ back, so a file that failed to ingest is picked up again on the next poll rather
 than being silently marked done. `POST /api/v1/rag/sync` runs the same diff on
 demand; `GET /api/v1/rag/sync/check` reports it without acting.
 
+## Known risks carried into Phase 6
+
+- **The Drive OAuth callback checks no `state`.** `DriveAuthManager.authUrl()`
+  sets no `state` parameter, and storage-service's `AuthController` callback
+  accepts any `code`. The OAuth client id and the redirect URI are both public,
+  and both callback paths are anonymous by necessity, so an attacker can run
+  consent against their own Google account and hand the resulting `code` to the
+  callback — directly, or by luring an operator's browser to it. That binds the
+  attacker's Drive as the stack's single Drive identity and feeds its PDFs into
+  the corpus the Event Advisor answers from. Phase 6 Tasks 1–2 add a single-use
+  `state` nonce.
+- **Eureka has no authentication.** `discovery-server` carries no Spring
+  Security, so anything that can reach port 8761 can register an instance, and
+  every peer that calls it sends `X-Internal-Token` plus the caller's JWT.
+  Compose binds 8761 to `127.0.0.1`, which is the only mitigation. Phase 6 does
+  not change this.
+
 ## Reference trace
 
 Every service reports to Zipkin with `management.tracing.sampling.probability: 1.0`
 — all spans, which is right for a demo stack and not for production.
 
+To reproduce the chat trace:
+
 1. Bring up the full stack and log in at <http://localhost:3000>.
 2. Ask the Event Advisor anything.
 3. Open <http://localhost:9411> and query for service `api-gateway`.
 
-The trace to look for spans gateway → chat → retrieval → ai / knowledge → ai.
-A Drive-triggered ingest should produce a second trace that crosses Kafka:
-`spring.kafka.template.observation-enabled` and
+The trace spans gateway → chat → retrieval → ai / knowledge → ai. The one below
+was captured during Phase 5 verification, with the services running from their
+jars on the host: 48 spans across six services, Redis included.
+
+![Zipkin trace of one Event Advisor request](docs/images/reference-trace.png)
+
+A second trace crosses Kafka: `spring.kafka.template.observation-enabled` and
 `spring.kafka.listener.observation-enabled` are both set in
 `config-repo/application.yml`, so the producer's context rides the message
-headers to the consumer. Both traces are checks for the live walkthrough, not
-claims already made.
+headers to the consumer. A Drive-triggered ingest is one trace from the sync
+request to the indexed document, across all three topics and five services:
+gateway → storage `/sync` → `bloom.documents.discovered` → ingestion (which
+fetches the PDF from storage, embeds through ai-service and clears the
+document's old chunks in knowledge-service) → `bloom.chunks.batch-ready` →
+knowledge → `bloom.documents.indexed` → storage. Captured in Compose on
+2026-09-24, 88 spans:
 
-A screenshot of the chat trace belongs at `docs/images/reference-trace.png`. It
-is captured during that walkthrough, from a real run; the file is not in the
-repository yet.
+![Zipkin trace of a Drive-triggered ingest crossing Kafka](docs/images/drive-kafka-trace.png)
+
+## What to demo
+
+Run from the repository root with the full stack up. The Compose project is
+named `bloom-v2` (the top-level `name:` in `deploy/docker-compose.yml`). The
+infra containers have fixed names such as `bloom-v2-kafka`; the apps do not, so
+Compose names them `bloom-v2-ai-service-1` and so on. Address them by service
+name through `docker compose` rather than by container name:
+
+```bash
+export COMPOSE_FILE=deploy/docker-compose.yml COMPOSE_PROFILES=infra,platform,apps
+```
+
+1. `docker compose up -d --build`, then `docker compose ps`: sixteen
+   containers, all `healthy`. The Eureka dashboard at <http://localhost:8761>
+   lists eight registrations, the seven services and the gateway.
+2. <http://localhost:3000> → log in → the app.
+3. Settings → *Connect Google Drive* → consent → back in the app, badge reading
+   *Connected*.
+4. Drop a PDF into the Drive folder. The next poll picks it up, or an
+   authenticated `POST /api/v1/rag/sync` runs the diff at once. Follow it with
+   `docker compose logs -f storage-service ingestion-service knowledge-service`,
+   then ask the advisor about it.
+5. Zipkin at <http://localhost:9411>: the chat trace, and the ingest trace
+   crossing Kafka (see "Reference trace").
+6. `docker compose stop ai-service`, then ask the advisor: a `503`
+   ProblemDetail, returned almost instantly once the breaker opens after the
+   first few calls. Retrieval does not keep working — both of its paths need a
+   query embedding from ai-service, so `POST /api/v1/rag/retrieve` answers
+   `502`. `docker compose start ai-service`: recovery with no restart. How long
+   it takes depends on how long the breakers have already been open, because
+   `waitDurationInOpenState` (30 s) runs from the moment each one opened, and
+   two close in sequence: about 60 s on 2026-09-17, about 21 s on 2026-09-24.
+7. `curl -i http://localhost:8080/api/v1/rag/ping` → `401` ProblemDetail; with a
+   token → `200`.
+8. In `config-repo/retrieval-service.yml`, replace `topK: ${RAG_TOP_K:15}` with
+   a literal such as `topK: 8`. Compose sets `RAG_TOP_K` on retrieval-service,
+   so editing only the default after the colon changes nothing. Then refresh
+   retrieval-service — no restart. `POST /actuator/refresh` needs
+   authentication (a JWT or `X-Internal-Token`), and retrieval's port is not
+   published, so the call is made from inside its container:
+
+   ```bash
+   docker compose exec retrieval-service sh -c \
+     'curl -fsS -X POST -H "X-Internal-Token: $INTERNAL_SERVICE_TOKEN" http://localhost:8084/actuator/refresh'
+   ```
+
+   It answers with the keys that changed, `["bloom.retrieval.topK"]`. A value
+   outside 1–100 is rejected and the last valid one stays in effect.
+9. `docker compose exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list`
+   shows the four `bloom.*` topics. Dead-letter topics are named `<topic>-dlt`,
+   not `.DLT`, and appear only once a record has failed its retries — for
+   example `bloom.chunks.batch-ready-dlt`.
+10. The spec deviations log below: every place the build disagreed with the
+    spec or a plan, and why.
 
 ## Spec deviations log
 
@@ -424,6 +572,16 @@ Every place the build disagrees with the design spec or the phase plan, and why.
 | `@ConditionalOnClass` on `bloom-security`'s Feign interceptor `@Bean` method | The bean lives in a nested `@Configuration` that carries the condition | Spring reflects over method signatures before evaluating the condition, and the return type implements `feign.RequestInterceptor` — knowledge-service, which has no Feign, died with `ClassNotFoundException` |
 | — | `frontend/.dockerignore` added | The image's `COPY . .` runs after `npm ci`; without it the host's `node_modules` would overwrite the container's |
 | Login accepts `?next=` when it starts with `/` | `safeNextPath` rejects `//` and `/\`, then re-resolves against `window.location.origin` | A leading-slash check alone accepts `//evil.example`, which browsers resolve off-origin |
+| Spec §6: `DeadLetterPublishingRecoverer` to a `.DLT` topic | `<topic>-dlt`, e.g. `bloom.chunks.batch-ready-dlt`, created on the first record that exhausts its retries | Spring Kafka 4.x's default destination resolver appends `-dlt` (checked in `spring-kafka` 4.0.7), and no service overrides it |
+| Phase 3b plan, Task 4: `AutoSyncScheduler` "runs immediately, then every interval", as V1's `startAutoSync` did | At boot the first poll waits `sync-initial-delay-ms` (default 60 s); an OAuth callback or `POST /sync/auto` still polls at once | Polling at boot lost a race with Eureka: knowledge-service was not yet resolvable, so the first sync failed, opened the breaker and left Settings reading `error` until the next poll |
+| Spec §9.3 and the Phase 5 exit criteria: with `ai-service` stopped, "retrieval degrades to the plain path" | Retrieval fails with `502` and chat returns `503`. Only query variation and re-rank degrade, to the original query and to vector order | Both paths need a query embedding from ai-service (`RetrievalService.retrieve`). The browser-side embedding that would have let the plain path skip it was removed; see the `embeddingService.ts` row |
+| Phase 5 exit criteria: breaker "recovery is automatic after 30 s" | Automatic, with no restart, but not a fixed 30 s after `ai-service` returns: about 60 s on 2026-09-17, about 21 s on 2026-09-24 | `waitDurationInOpenState` (30 s) runs from when each breaker opened, not from when the peer came back, and two breakers recover in sequence: retrieval→ai, then chat→retrieval |
+| Phase 5 plan, Task 6: `@FeignClient(…, fallback = XClientFallback.class)`, every fallback throwing "`<peer> unavailable (circuit open)`" | `fallbackFactory = …FallbackFactory.class`. `FeignFallbacks.failure` hands a 4xx `FeignException` back unchanged, and every Feign-calling service's `config-repo` file sets `ignoreExceptions: feign.FeignException$FeignClientException`. The message says "circuit open" only when the breaker is open, and otherwise says the peer was unreachable, timed out or answered 5xx | `FeignCircuitBreakerInvocationHandler` sends every throwable to the fallback, a peer's deliberate 401 or 404 included, and `Resilience4JCircuitBreaker` records the failure before the fallback runs. Without both changes a run of 404s would open the breaker and read as "peer down"; a blanket "circuit open" also misreported plain connection failures |
+| Phase 5 plan, Task 7: `curl http://localhost:8082/actuator/info` shows the build, anonymously | `/actuator/info` needs authentication (a JWT or `X-Internal-Token`) | `bloom-security` permits only `/actuator/health`, `/actuator/health/**` and each service's permit-all paths; the Compose probes need nothing else |
+| Phase 5 exit criteria: "all fifteen containers healthy"; spec §10.2: `apps` holds "the seven business services" | Sixteen containers, all with healthchecks: `apps` also holds `frontend`, the nginx-served SPA | The SPA needs a container of its own once `vite-express` is gone, and the plan's count left it out |
+| Spec §10.1: static assets "served by an nginx container behind the gateway" | nginx sits in front of the gateway: it serves the SPA on `:3000` and proxies `/api` and `/.well-known` to `api-gateway:8080` | The browser talks only to its own origin, so no CORS configuration is needed, and it never learns the gateway's address |
+| Phase 0 and Phase 5 plans: host ports published on every interface (`"7687:7687"`, `"8761:8761"`, …) | Every published port except `api-gateway` (8080) and `frontend` (3000) binds to `127.0.0.1` | They are admin and datastore ports, most with no authentication — Eureka accepts anonymous registrations. Loopback keeps the dashboards usable on this machine and takes them off the network |
+| Spec §9.3: breakers "on the two genuinely external boundaries", ai-service → Gemini and storage-service → Drive | Those two, plus one on every `@FeignClient` between services (Phase 5 plan, Task 6) | A peer that is down or slow would otherwise hold each caller's request thread for the full Feign timeout; with a breaker the caller fails fast and gets a clean `503` or its own retry path |
 
 ## Phase verification log
 
@@ -1096,7 +1254,87 @@ into one misattributed chain was wrong.
 ### Still not verified
 
 - **The Google consent screen itself.** Completing a fresh grant needs a human at
-  the browser; the existing grant is live and exercised above.
+  the browser; the existing grant is live and exercised above. Done on
+  2026-09-24, below.
+
+## Phase 5 finishing pass (2026-09-24)
+
+A gap audit of the branch against the plan, the spec and the final review, the
+fixes it called for, and a live walkthrough of every exit criterion in the
+Compose stack.
+
+`./mvnw clean install` — BUILD SUCCESS across sixteen reactor projects:
+**376 tests, 0 failures, 0 errors, 0 skipped** (357 before the pass).
+`cd frontend && npm test` — **30 passed** (10 before), and `npm run build` is
+clean.
+
+### Found by the audit, fixed
+
+- **An unconnected Drive logged the user out.** storage-service answers "Drive
+  not connected" with `401 DRIVE_NOT_AUTHENTICATED`, and `apiFetch` treated every
+  `401` as a dead JWT: it cleared the token and went to `/login`. Proposals calls
+  Drive on mount, so before Drive was connected the page bounced straight to
+  login. Every earlier run had a Drive grant in place, so none saw it.
+- **The gateway's signing key reached every container.** One Compose
+  environment anchor carried `JWT_PRIVATE_KEY_PEM` and `APP_AUTH_PASSWORD` into
+  all seven services. Only the gateway gets them now.
+- **config-server and discovery-server never reported to Zipkin** in Compose:
+  they do not import config-repo, so they posted to their own localhost.
+- **Config refresh could not work.** `refresh` was not exposed and
+  `RetrievalProperties` was a record, which the rebinder cannot update.
+- The ten open minor findings of the final review, the stale README passages and
+  a Mermaid diagram whose edges did not match the Feign clients.
+
+### Found only by running it
+
+**Chat failed about half the time.** Every breaker shared a 20 s time limit, and
+an Event Advisor answer takes 17–25 s, so the limit fired in ai-service and in
+chat-service at once and the browser got `503 ai-service unavailable (timed
+out)`. The new failure labels named the cause on the first try. ai-service now
+allows 90 s on `gemini` and its callers 100 s, and nginx's 60 s read timeout
+rises to 120 s. Four consecutive chats then answered in 21.3, 24.3, 17.1 and
+17.1 s.
+
+**A refresh dropped the service out of Eureka.** Spring Cloud 5 resets each
+`@ConfigurationProperties` bean from a fresh default instance before rebinding,
+and `EurekaInstanceConfigBean`'s no-arg constructor leaves `hostname` and
+`ipAddress` null. The refresh blanked them, the rebuilt Eureka client registered
+`RETRIEVAL-SERVICE/null` and got a `400`, the old client had already
+deregistered, and the gateway answered `/retrieve` with `503`. The refresh itself
+returned `500`. `spring.cloud.refresh.never-refreshable` now lists that bean.
+Found only because the demo was run rather than trusted to its tests.
+
+**A rejected refresh still took effect.** The binder calls the setter before
+validation, so `topK: 500` failed validation and the service ran on 500 anyway.
+Callers now read a value published only after validation succeeds.
+
+**The Docker VM was too small.** At 4 GB it held the idle stack at 3.7 GB; an
+in-Docker rebuild tipped it over, the OOM killer took ingestion-service, Kafka
+climbed to four cores and the engine stopped answering. At 12 GB the stack idles
+at 4.1 GB with Kafka under 4% CPU.
+
+### Every exit criterion, live in Compose
+
+| Criterion | Evidence |
+| --- | --- |
+| Stack | **16/16 containers healthy**, frontend included; 8 Eureka registrations, all `UP`; `docker compose config` shows no host bind with this machine's override |
+| SPA against the gateway | In a browser on `:3000`: proposals company list, generate (**14.5 s**, 9 slides) and save to Drive. Through the same nginx path with curl: download (a 9-page 1280 × 720 PDF) and intake submit (brief uploaded to Drive in 2.6 s) |
+| Drive not connected | A Drive `401` on Proposals leaves the session intact: the next request still carries the token, and the app sends the user to Settings, not `/login` |
+| Login and tokens | Anonymous `401 problem+json`; token `200`; only `api-gateway` holds `APP_AUTH_*` and `JWT_*_PEM` |
+| Google OAuth through the legacy shim | Consent completed by a person at the browser: Google → `/api/rag/auth/google/callback` `307` → `/api/v1/rag/sync/auth/callback` `302`, no bearer-token span on either |
+| Chat trace | One trace, **50 spans, five services**: gateway → chat → retrieval → ai (embed) and knowledge (search) → ai (generate) |
+| Drive-triggered trace across Kafka | One trace, **88 spans**: sync → `discovered` → ingestion → `batch-ready` → knowledge → `indexed` → storage. The new PDF went from Drive to indexed in about 4 s. `docs/images/drive-kafka-trace.png` |
+| Zipkin | Ten services reporting, config-server and discovery-server included |
+| Breakers | ai-service stopped: calls 1–3 were real attempts (10.1, 3.1, 3.2 s), call 4 took 0.04 s, 5–6 took 0.02 s with `circuit open`; retrieve `502`; non-AI endpoints `200`; chat recovered with no restart about 21 s after ai-service was healthy |
+| Config refresh | `topK` 15 → 8 → 15 with no restart; refresh `200 ["bloom.retrieval.topK"]`; anonymous `401`; retrieval stays registered throughout |
+| Auto-sync at boot | First poll 65 s after start, not 9 s |
+| Kafka | The four `bloom.*` topics; no `-dlt` topic yet, since none has been needed |
+
+### Deviation in this run
+
+The same throwaway override as on 2026-09-20 swapped both bind mounts for named
+volumes, because this drive is outside Docker Desktop's file sharing. Phase 6
+removes both mounts.
 
 ## Repository layout
 
