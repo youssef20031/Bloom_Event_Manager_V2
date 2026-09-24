@@ -2,9 +2,11 @@ server:
   port: 8888
 
 encrypt:
-  # The one secret that cannot live in config-repo. 32+ random bytes. Deliberately
-  # no default: without the key the server would serve every {cipher} value as
-  # invalid.<name>, and clients would fail later and more confusingly.
+  # The one secret that cannot live in config-repo. 32+ random bytes. Having no
+  # default is not what stops a keyless start: property binding keeps an
+  # unresolvable ${ENCRYPT_KEY} as literal text, and the server would run keyed
+  # with that string. EncryptKeyGuard refuses to start instead when ENCRYPT_KEY
+  # is missing or blank.
   key: ${ENCRYPT_KEY}
 
 spring:
