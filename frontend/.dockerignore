@@ -3,3 +3,6 @@
 # ones npm ci just installed, and a stale dist/ would shadow the fresh build.
 node_modules
 dist
+# Local Vite env files. COPY . . would otherwise bake whatever they hold into
+# the production bundle, and anything a bundle holds is public.
+.env*

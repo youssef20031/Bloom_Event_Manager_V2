@@ -18,3 +18,15 @@ docs
 .claude
 .superpowers
 Claude outputs
+
+# Secrets. Dockerfile.service COPYs only pom.xml, mvnw, .mvn, platform,
+# infrastructure and services, so none of these reach an image today; this
+# keeps them out of the build context too, so a future COPY . cannot ship them.
+# Patterns here are anchored at the context root, hence the **/ forms.
+deploy/.env
+**/.env
+secrets/
+**/secrets
+*.pem
+**/*.pem
+**/client_secret*.json
