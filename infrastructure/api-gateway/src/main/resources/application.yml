@@ -96,5 +96,9 @@ bloom:
     # bloom.security.internal-token, but there is exactly one shared value:
     # point at what config-repo/application.yml already carries (as {cipher}
     # ciphertext, decrypted by the Config Server before this ever sees it),
-    # so the gateway and every service read the same source.
-    internal-token: ${bloom.security.internal-token}
+    # so the gateway and every service read the same source. The empty default
+    # is deliberate: with no default, an unresolvable placeholder binds as its
+    # own literal text, which @NotBlank accepts, and a gateway started without
+    # the Config Server ran healthy stamping that text on forwarded requests.
+    # Empty, @NotBlank on AuthProperties.internalToken fails startup instead.
+    internal-token: ${bloom.security.internal-token:}
