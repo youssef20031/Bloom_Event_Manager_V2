@@ -1,3 +1,8 @@
 bloom:
   config-server:
     reachable: true
+    # Ciphertext of "decrypted-ok" under the test-only key from
+    # ConfigServerApplicationTests ("test-only-encrypt-key-not-a-secret"); not a
+    # real secret, just a fixture proving {cipher} values are decrypted before
+    # they are served.
+    decrypted: '{cipher}ff6089adc4d975c7a2faeddb44297cd87998666eccd2c219f4b30334f71482b9'

@@ -48,7 +48,12 @@ bloom:
   security:
     # Stamped by the gateway on forwarded requests; lets Kafka-triggered
     # service-to-service calls (no user, no JWT) authenticate as SERVICE.
-    internal-token: ${INTERNAL_SERVICE_TOKEN}
+    # Committed as {cipher} ciphertext (Task 4): the Config Server decrypts it
+    # with ENCRYPT_KEY before serving it, so no client ever needs the token in
+    # its own environment. Single-quoted -- unquoted, YAML reads {cipher}... as
+    # a flow mapping. This ciphertext belongs to this deployment; a new
+    # deployment generates its own ENCRYPT_KEY and re-encrypts its own value.
+    internal-token: '{cipher}52f40d911eee5b5a4d54c2ee6148993e6dadddc7548dfaf5d658d35ef2274c5b36a5c00eae957f77e435336fccf213e0f6cfa030266ac95f6dcaaa768f6dfabb'
 
 management:
   endpoints:

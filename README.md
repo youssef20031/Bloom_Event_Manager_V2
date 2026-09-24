@@ -137,14 +137,19 @@ Then run whichever services you are working on from the IDE or with
 the published ports: Config Server on `localhost:8888`, Eureka on
 `localhost:8761`, Kafka on `localhost:29092` (the broker advertises a second
 `PLAINTEXT_HOST` listener for exactly this), Zipkin on `localhost:9411`. Give
-the IDE run configuration at least `INTERNAL_SERVICE_TOKEN`, plus whatever that
-service needs — `GEMINI_API_KEY` for `ai-service`, `NEO4J_*` for
-`knowledge-service`, and so on.
+the IDE run configuration whatever that service needs — `GEMINI_API_KEY` for
+`ai-service`, `NEO4J_*` for `knowledge-service`, and so on. None of them need
+`INTERNAL_SERVICE_TOKEN` any more: `bloom.security.internal-token` now arrives
+from the Config Server already decrypted (see "Encrypted configuration").
 
 Start the Config Server before any service. Each service's `application.yml`
 imports `optional:configserver:…`, but `bloom.security.internal-token` is set
 only in `config-repo/application.yml`, so a service started without the Config
-Server fails at startup with a `BindValidationException` on that property.
+Server fails at startup with a `BindValidationException` on that property. The
+Config Server itself needs `ENCRYPT_KEY` to decrypt it: `docker compose
+--profile platform up` reads it from `deploy/.env` and refuses to start
+config-server without it; a host run needs it in that run configuration's own
+environment instead.
 
 The SPA runs against the gateway through Vite's proxy:
 
@@ -338,6 +343,49 @@ blank and the gateway generates an ephemeral 2048-bit pair at startup and logs a
 warning: every token dies with the process, which is fine for development and
 never for anything else.
 
+### Encrypted configuration
+
+`INTERNAL_SERVICE_TOKEN` and `GOOGLE_CLIENT_SECRET` are not environment
+variables any more. They are committed to `config-repo/application.yml` and
+`config-repo/storage-service.yml` as Spring Cloud Config `{cipher}` ciphertext,
+and the Config Server decrypts them — for the native filesystem backend just as
+for any other — before serving `bloom.security.internal-token` and
+`bloom.storage.client-secret` to whatever imports them. `ENCRYPT_KEY` is the
+one shared secret this leaves in `deploy/.env`: 32+ random bytes, generated
+with `openssl rand -base64 32`, given only to the Config Server container.
+Without it the server would serve every `{cipher}` value as `invalid.<name>`,
+and clients would fail later and more confusingly — a Bean validation error on
+a property that looks present but isn't — so `deploy/docker-compose.yml` gives
+config-server `ENCRYPT_KEY: ${ENCRYPT_KEY:?set ENCRYPT_KEY in deploy/.env}` and
+fails `compose up` immediately instead if it is unset.
+
+To encrypt a new value against a running Config Server:
+
+```bash
+curl -s -X POST -H 'Content-Type: text/plain' --data-binary 'the-plaintext' \
+     http://localhost:8888/encrypt
+```
+
+`/encrypt` needs `text/plain` and the raw body (`--data-binary`) — a
+form-encoded POST gets mangled. Write the result into config-repo as
+`some-key: '{cipher}<ciphertext>'`: single-quoted, because unquoted YAML reads
+`{cipher}…` as a flow mapping, not a string. `POST /decrypt` with the same
+body shape reverses it, useful for checking a value without waiting on a
+service restart.
+
+The ciphertext committed here belongs to this deployment. `ENCRYPT_KEY` is
+generated once per environment and never reused, so standing up a new
+deployment means generating a fresh key and re-encrypting `INTERNAL_SERVICE_TOKEN`,
+`GOOGLE_CLIENT_SECRET` and anything else added under this scheme with it —
+the old ciphertext will not decrypt under a new key.
+
+Encryption protects config-repo's contents at rest (in git, on disk) — it does
+not change who can read a running Config Server's HTTP responses, which are
+always **decrypted** plaintext. That is the same trust boundary the rest of
+the platform stack already relies on: port 8888 is bound to `127.0.0.1` on the
+host and otherwise reachable only from containers on the Compose network,
+exactly like the anonymous Eureka registry.
+
 ### Environment variables
 
 Gateway and platform:
@@ -346,7 +394,7 @@ Gateway and platform:
 |---|---|---|
 | `APP_AUTH_USER` | — (required) | api-gateway only. The single login username |
 | `APP_AUTH_PASSWORD` | — (required) | api-gateway only. The single login password |
-| `INTERNAL_SERVICE_TOKEN` | — (required, gateway and every service) | Shared `X-Internal-Token` value |
+| `ENCRYPT_KEY` | — (required, config-server only) | Decrypts `{cipher}` values in config-repo, including `bloom.security.internal-token`; see "Encrypted configuration" |
 | `JWT_PRIVATE_KEY_PEM` | blank | api-gateway only. RS256 private key PEM; blank ⇒ ephemeral key |
 | `JWT_PUBLIC_KEY_PEM` | blank | api-gateway only. Matching public key PEM |
 | `JWT_TTL` | `PT12H` | api-gateway only. Token lifetime |
@@ -377,8 +425,8 @@ Data stores and external services:
 | `PDF_DIRECTORY` | `./ISM_PDF` | ingestion-service's local ingest path. In Compose it names the **host** directory to mount (default `./pdfs`); the container always reads `/data/pdfs` |
 | `CHUNK_SIZE` / `CHUNK_OVERLAP` | `1000` / `200` | ingestion-service |
 | `TESSDATA_PATH` | blank | ingestion-service; blank ⇒ the `eng.traineddata` bundled in the jar |
-| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | blank | storage-service |
-| `GOOGLE_CREDENTIALS_PATH` | `./secrets/client_secret.json` | storage-service, if the pair above is not set |
+| `GOOGLE_CLIENT_ID` | blank | storage-service. `GOOGLE_CLIENT_SECRET` sits beside it in `bloom.storage.*` but is config-repo `{cipher}` ciphertext, not an environment variable; see "Encrypted configuration" |
+| `GOOGLE_CREDENTIALS_PATH` | `./secrets/client_secret.json` | storage-service, if `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` above is not set |
 | `GOOGLE_OAUTH_REDIRECT_URI` | `http://localhost:8080/api/rag/auth/google/callback` | storage-service — must match the Console |
 | `GOOGLE_DRIVE_FOLDER_ID` | blank | storage-service — the folder to sync |
 | `DRIVE_SYNC_INTERVAL_MS` | `300000` | storage-service auto-sync poll (minimum 10000) |

@@ -1,6 +1,12 @@
 server:
   port: 8888
 
+encrypt:
+  # The one secret that cannot live in config-repo. 32+ random bytes. Deliberately
+  # no default: without the key the server would serve every {cipher} value as
+  # invalid.<name>, and clients would fail later and more confusingly.
+  key: ${ENCRYPT_KEY}
+
 spring:
   application:
     name: config-server

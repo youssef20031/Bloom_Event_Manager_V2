@@ -21,14 +21,16 @@ name: bloom-v2
 # application.yml actually read belongs here. The gateway's signing keys and
 # the login credentials are deliberately NOT in this block: the private key
 # lives only in the gateway, and every other service validates tokens against
-# the public JWKS it publishes (JWT_JWKS_URI).
+# the public JWKS it publishes (JWT_JWKS_URI). INTERNAL_SERVICE_TOKEN is gone
+# from here too (Task 4): config-repo/application.yml now carries
+# bloom.security.internal-token as {cipher} ciphertext, which the Config
+# Server decrypts with ENCRYPT_KEY before any service ever sees the plaintext.
 x-service-env: &service-env
   CONFIG_SERVER_URL: http://config-server:8888
   EUREKA_URL: http://discovery-server:8761/eureka/
   KAFKA_BOOTSTRAP_SERVERS: kafka:9092
   ZIPKIN_ENDPOINT: http://zipkin:9411/api/v2/spans
   JWT_JWKS_URI: http://api-gateway:8080/.well-known/jwks.json
-  INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN}
 
 # Optional tuning below is passed only to the service that reads it, as
 # ${VAR:-<default>} with <default> copied exactly from that service's
@@ -179,6 +181,11 @@ services:
       # profile still starts without infra, and an absent collector costs
       # dropped spans, not a failed boot.
       ZIPKIN_ENDPOINT: http://zipkin:9411/api/v2/spans
+      # The one secret still shared through the environment. ${VAR:?msg} fails
+      # `compose up` immediately with msg when ENCRYPT_KEY is unset, rather
+      # than starting a server that would serve every {cipher} value as
+      # invalid.<name> and let every dependent service fail later, less clearly.
+      ENCRYPT_KEY: ${ENCRYPT_KEY:?set ENCRYPT_KEY in deploy/.env}
     # No volume: config-repo/ is baked into the image (deploy/Dockerfile.service,
     # target config-server). For live edits run
     #   docker compose -f deploy/docker-compose.yml --profile platform watch config-server
@@ -311,7 +318,6 @@ services:
       MONGO_URI: mongodb://mongodb:27017
       MONGO_TOKEN_DB: ${MONGO_TOKEN_DB:-tokendb}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
-      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
       GOOGLE_DRIVE_FOLDER_ID: ${GOOGLE_DRIVE_FOLDER_ID:-}
       GOOGLE_OAUTH_REDIRECT_URI: http://localhost:8080/api/rag/auth/google/callback
       FRONTEND_URL: http://localhost:3000

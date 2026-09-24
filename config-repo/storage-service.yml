@@ -29,7 +29,12 @@ bloom:
       - /api/v1/storage/auth/callback
   storage:
     client-id: ${GOOGLE_CLIENT_ID:}
-    client-secret: ${GOOGLE_CLIENT_SECRET:}
+    # Committed as {cipher} ciphertext (Task 4), decrypted by the Config
+    # Server with ENCRYPT_KEY before being served. Single-quoted -- unquoted,
+    # YAML reads {cipher}... as a flow mapping. This ciphertext belongs to
+    # this deployment; a new deployment generates its own ENCRYPT_KEY and
+    # re-encrypts its own value.
+    client-secret: '{cipher}6bea9e129de588e6d5f5a4b84ee25e4081e6ac79a297ce8fb130386040a2f6350fbab37f178e762b40eb5c5bb24cf624807901ec3769c0e9f0321550b767d527'
     credentials-path: ${GOOGLE_CREDENTIALS_PATH:./secrets/client_secret.json}
     # Registered in Google Cloud Console. The gateway's legacy shim owns this path.
     redirect-uri: ${GOOGLE_OAUTH_REDIRECT_URI:http://localhost:8080/api/rag/auth/google/callback}
