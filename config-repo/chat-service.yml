@@ -56,3 +56,10 @@ resilience4j:
       default:
         ignoreExceptions:
           - feign.FeignException$FeignClientException
+  timelimiter:
+    configs:
+      default:
+        # Above ai-service's own 90 s limit on Gemini, so a slow generation comes back
+        # as ai-service's diagnosis rather than this hop timing out first. The 20 s
+        # default in application.yml stays for services that never wait on Gemini.
+        timeoutDuration: 100s

@@ -24,3 +24,14 @@ bloom:
 # readinessState by default, so a Redis outage is visible on /actuator/health
 # but never takes this service out of rotation — the same judgment V1 encoded
 # in a comment in healthRoutes.ts.
+
+# Gemini generation is slow and legitimately so: measured in Compose on 2026-09-24,
+# an Event Advisor answer took 17-25 s, and the shared 20 s time-limiter default cut
+# about half of them off as "timed out". Embeddings share this breaker and finish in
+# a second or two, so the higher ceiling only matters to generation. Callers that can
+# wait on this (chat, proposal, retrieval) set their own limit above it.
+resilience4j:
+  timelimiter:
+    instances:
+      gemini:
+        timeoutDuration: 90s

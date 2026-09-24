@@ -96,5 +96,7 @@ resilience4j:
   timelimiter:
     configs:
       default:
-        # Gemini generation can take a while; the default 1s would trip on every call.
+        # Resilience4j's own default is 1 s. 20 s suits hops that never wait on Gemini
+        # generation; ai-service (90 s on `gemini`) and its callers chat, proposal and
+        # retrieval (100 s) raise it in their own files.
         timeoutDuration: 20s
