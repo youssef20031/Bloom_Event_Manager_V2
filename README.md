@@ -1443,6 +1443,55 @@ The same throwaway override as on 2026-09-20 swapped both bind mounts for named
 volumes, because this drive is outside Docker Desktop's file sharing. Phase 6
 removes both mounts.
 
+## Phase 6 verification (2026-09-25)
+
+Task 5's live walkthrough: the real `deploy/docker-compose.yml` alone, no
+override, brought up and exercised end to end — the payoff this phase set out
+for, since Phase 5's overrides existed only because this drive is outside
+Docker Desktop's file sharing.
+
+`./mvnw -q clean install` — **exit 0**, **393 tests, 0 failures, 0 errors, 0
+skipped**, aggregated over 93 surefire reports across the sixteen reactor
+projects (15 `<module>` entries plus the root). Docker was up throughout, so
+the Testcontainers-backed classes ran rather than skipped.
+`cd frontend && npm test` — **30 passed**, 6 files.
+
+```bash
+docker compose -f deploy/docker-compose.yml --profile infra --profile platform --profile apps up -d --build
+```
+
+recreated every container from the committed file — no scratch override, no
+throwaway named-volume substitution. Full rebuild (all sixteen images) took
+about 8 minutes; the last container reached `healthy` about 90 seconds after
+the images were ready.
+
+| Criterion | Evidence |
+| --- | --- |
+| No host bind mounts | `docker compose … config \| grep -c "type: bind"` → `0` |
+| All sixteen containers healthy | `docker compose … ps`: **16/16**, `frontend` included; `docker inspect … --format '{{json .Mounts}}'` on every one of the ten built-image containers → `[]`, ingestion-service excepted (see below) |
+| Eureka | 8 registrations, all `UP` |
+| ingestion-service's PDF volume | `docker inspect bloom-v2-ingestion-service-1` shows one mount: `volume bloom-v2_ingest-pdfs -> /data/pdfs RW=false` — a named volume, not a host path |
+| PDF loaded into the volume | A helper container (`docker run -d -v bloom-v2_ingest-pdfs:/data/pdfs alpine sleep 300`, then `docker cp`) placed one PDF from V1's corpus into it; `docker exec bloom-v2-ingestion-service-1 ls -la /data/pdfs` lists it, and `touch` inside the container fails with `Read-only file system`. `/api/v1/rag/ingest` was **not** called — that would re-ingest into the live knowledge graph. The file is left in the volume; harmless |
+| `INTERNAL_SERVICE_TOKEN` / `GOOGLE_CLIENT_SECRET` in any container's environment | `0` on all sixteen containers (`docker inspect … Config.Env \| grep -c`, counts only) |
+| `ENCRYPT_KEY` in the environment | `1` on config-server, `0` everywhere else |
+| Login | `POST /api/v1/auth/login` with `APP_AUTH_USER`/`APP_AUTH_PASSWORD` from `deploy/.env` → `200`, token received (neither credential nor token printed) |
+| Peer authentication through the decrypted internal token | `POST /api/v1/rag/retrieve` (gateway → retrieval-service → ai-service for the query embedding, → knowledge-service for the vector search) with the login token → `200`, real chunks from the indexed corpus. Retrieval only succeeds if `bloom.security.internal-token`, decrypted server-side from config-repo's `{cipher}` value, is accepted by every peer in the chain |
+| OAuth `state`, step 1 — mint | `GET /api/v1/rag/sync/auth?force=true` (authenticated) → `authUrl` present, contains `state=`; host+path `accounts.google.com/o/oauth2/v2/auth` (state value not printed) |
+| OAuth `state`, step 2 — forged callback rejected | `curl … '/api/rag/auth/google/callback?code=forged&state=forged'` → `307` to `/api/v1/rag/sync/auth/callback?code=forged&state=forged`; following that hop → `302` to `http://localhost:3000/?auth=error` |
+| OAuth `state`, step 2 — no token exchange attempted | `docker logs bloom-v2-storage-service-1 \| grep -c "Rejected Google OAuth callback"` → `1` (exactly the forged attempt); `grep -c "OAuth callback failed"` → `0` — `states.consume(state)` returned `false` before `auth.authenticate(code)` was ever reached |
+| OAuth `state`, step 3 — TTL index | `docker exec bloom-v2-mongo mongosh --quiet tokendb --eval 'printjson(db.oauthstates.getIndexes())'` → an `expiresAt_1` index with `expireAfterSeconds: 0`, alongside `_id_`. `MONGO_TOKEN_DB` is unset in `deploy/.env`, so the database is the default `tokendb` |
+| OAuth `state`, step 3 — nonce present | `db.oauthstates.countDocuments({})` → `1`, the nonce minted in step 1 (the forged attempt's `state=forged` never matched it, so `findAndRemove` never touched it) |
+
+### Nothing new to fix
+
+Unlike the two Phase 5 verification passes, this run found no defect: the
+containers, the bind-mount removal, the encrypted secrets and the OAuth nonce
+all behaved exactly as their commits describe on the first bring-up from the
+committed file. The interesting failure mode this phase closes off — an
+operator's Docker file-sharing configuration blocking Compose entirely — simply
+did not arise, because nothing under `deploy/docker-compose.yml` still asks for
+a host path.
+
 ## Repository layout
 
 ```
