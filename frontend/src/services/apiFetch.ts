@@ -1,3 +1,5 @@
+import { isDriveNotConnected, readJsonBody } from "./problem";
+
 export const TOKEN_KEY = "bloom.token";
 
 export interface ApiFetchOptions {
@@ -16,6 +18,9 @@ export function getToken(): string | null {
 /**
  * fetch() with the gateway's JWT attached. A 401 means the token is missing,
  * expired, or the gateway's signing key changed: drop it and go log in.
+ *
+ * Exception: a 401 whose problem body says DRIVE_NOT_AUTHENTICATED is about
+ * Google Drive's OAuth token, not the user's session. The caller shows it.
  */
 export async function apiFetch(
   input: RequestInfo | URL,
@@ -30,7 +35,11 @@ export async function apiFetch(
 
   const response = await fetch(input, { ...init, headers });
 
-  if (response.status === 401 && options.redirectOn401 !== false) {
+  if (
+    response.status === 401 &&
+    options.redirectOn401 !== false &&
+    !isDriveNotConnected(await readJsonBody(response.clone()))
+  ) {
     try {
       localStorage.removeItem(TOKEN_KEY);
     } catch {

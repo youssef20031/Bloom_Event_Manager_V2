@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useDriveAuthStatus } from "../hooks/useDriveAuthStatus";
-import { apiFetch } from "../services/apiFetch";
+import { connectGoogleDrive } from "../services/driveAuth";
 import "./Settings.css";
 
 export default function Settings() {
@@ -12,11 +12,7 @@ export default function Settings() {
             window.location.href = authStatus.authUrl;
             return;
         }
-        const res = await apiFetch("/api/v1/rag/sync/auth?force=true");
-        if (res.ok) {
-            const data = await res.json();
-            if (data.authUrl) window.location.href = data.authUrl;
-        }
+        await connectGoogleDrive();
     };
 
     return (

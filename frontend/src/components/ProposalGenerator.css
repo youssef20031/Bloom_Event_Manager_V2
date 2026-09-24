@@ -347,6 +347,17 @@
   text-decoration: underline;
 }
 
+.save-error-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-6);
+  background: var(--color-error-bg);
+  color: var(--color-error-text);
+  border-left: 3px solid var(--color-error);
+  font-size: var(--font-size-sm);
+}
+
 /* Slide Viewport */
 .slide-viewport {
   position: relative;
@@ -959,7 +970,16 @@
   margin-bottom: var(--space-6);
 }
 
+.proposal-error-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-3);
+}
+
 .btn-retry {
+  display: inline-block;
+  text-decoration: none;
   padding: var(--space-3) var(--space-6);
   background: var(--glass-bg-strong);
   color: var(--text-primary);

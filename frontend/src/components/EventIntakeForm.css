@@ -563,6 +563,22 @@
   font-weight: bold;
 }
 
+.connect-drive-button {
+  margin-left: auto;
+  flex-shrink: 0;
+  padding: var(--space-2) var(--space-4);
+  background: transparent;
+  color: inherit;
+  border: 1px solid currentColor;
+  border-radius: var(--radius-md);
+  font-weight: var(--font-weight-bold);
+  cursor: pointer;
+}
+
+.connect-drive-button:hover {
+  background: color-mix(in srgb, currentColor 10%, transparent);
+}
+
 /* ============================================
    RESPONSIVE ADJUSTMENTS
    ============================================ */

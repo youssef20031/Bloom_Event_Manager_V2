@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import "./EventIntakeForm.css";
 import { apiFetch } from "../services/apiFetch";
+import { connectGoogleDrive } from "../services/driveAuth";
+import { errorMessage, isDriveNotConnected, readJsonBody } from "../services/problem";
 
 const DRAFT_STORAGE_KEY = "bloom-event-intake-draft";
 
@@ -171,8 +173,6 @@ const customerTypeOptions = [
   "Financial Services",
   "Retail / Consumer Goods",
   "Manufacturing / Industrial",
-  "Retail / Consumer Goods",
-  "Manufacturing / Industrial",
   "Oil and Gas / Energy",
   "Other",
 ];
@@ -340,6 +340,7 @@ export default function EventIntakeForm() {
   const [submitStatus, setSubmitStatus] = useState<{
     type: "success" | "error" | null;
     message: string;
+    driveNotConnected?: boolean;
   }>({ type: null, message: "" });
   const [openSections, setOpenSections] = useState<Set<number>>(new Set([1]));
 
@@ -427,9 +428,11 @@ export default function EventIntakeForm() {
         body: JSON.stringify(formData),
       });
 
-      const result = await response.json();
+      const result = (await readJsonBody(response)) as
+        | { fileName?: string; folderName?: string; viewLink?: string }
+        | null;
 
-      if (response.ok) {
+      if (response.ok && result) {
         const viewLinkText = result.viewLink
           ? ` View it here: ${result.viewLink}`
           : "";
@@ -444,18 +447,12 @@ export default function EventIntakeForm() {
           // best-effort cleanup
         }
       } else {
-        if (result.authUrl) {
-          setSubmitStatus({
-            type: "error",
-            message: `${result.error} Click here to authenticate: `,
-          });
-          window.open(result.authUrl, "_blank");
-        } else {
-          setSubmitStatus({
-            type: "error",
-            message: result.error || "Failed to submit brief.",
-          });
-        }
+        // The draft is autosaved, so the Connect action can navigate this tab to Google.
+        setSubmitStatus({
+          type: "error",
+          message: errorMessage(result, "Failed to submit brief."),
+          driveNotConnected: isDriveNotConnected(result),
+        });
       }
     } catch (error) {
       setSubmitStatus({
@@ -464,6 +461,17 @@ export default function EventIntakeForm() {
       });
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleConnectDrive = async () => {
+    const started = await connectGoogleDrive().catch(() => false);
+    if (!started) {
+      setSubmitStatus({
+        type: "error",
+        message: "Could not start the Google Drive connection. Try again from Settings.",
+        driveNotConnected: true,
+      });
     }
   };
 
@@ -1326,6 +1334,11 @@ export default function EventIntakeForm() {
           <div className={`submit-status ${submitStatus.type}`}>
             <span className="status-icon">{submitStatus.type === 'success' ? '✓' : '⚠'}</span>
             <span>{submitStatus.message}</span>
+            {submitStatus.driveNotConnected && (
+              <button type="button" className="connect-drive-button" onClick={handleConnectDrive}>
+                Connect Google Drive
+              </button>
+            )}
           </div>
         )}
 

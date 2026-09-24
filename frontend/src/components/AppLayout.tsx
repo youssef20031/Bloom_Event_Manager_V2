@@ -130,7 +130,7 @@ export default function AppLayout() {
 
           <button
             type="button"
-            className="nav-item nav-item-settings"
+            className="nav-item nav-item-logout"
             onClick={() => {
               logout();
               navigate("/login", { replace: true });

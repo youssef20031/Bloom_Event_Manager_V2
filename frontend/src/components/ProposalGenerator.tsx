@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback } from "react";
+import { Link } from "react-router-dom";
 import "./ProposalGenerator.css";
 import { apiFetch } from "../services/apiFetch";
+import { errorMessage, isDriveNotConnected, readJsonBody } from "../services/problem";
 
 // ─── Types ─────────────────────────────────────────────────────
 
@@ -29,9 +31,26 @@ export default function ProposalGenerator() {
     const [currentSlide, setCurrentSlide] = useState(0);
     const [isGenerating, setIsGenerating] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [driveDisconnected, setDriveDisconnected] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
     const [saveResult, setSaveResult] = useState<{ fileName: string; viewLink: string } | null>(null);
     const [isDownloading, setIsDownloading] = useState(false);
+
+    /** Show a failed response's message; a Drive-not-connected one also offers Settings. */
+    const showFailure = (body: unknown, fallback: string) => {
+        setDriveDisconnected(isDriveNotConnected(body));
+        setError(errorMessage(body, fallback));
+    };
+
+    const showException = (err: unknown) => {
+        setDriveDisconnected(false);
+        setError(err instanceof Error ? err.message : String(err));
+    };
+
+    const clearError = () => {
+        setError(null);
+        setDriveDisconnected(false);
+    };
 
     // ─── Load Companies on Mount ─────────────────────────────────
 
@@ -43,15 +62,16 @@ export default function ProposalGenerator() {
         setLoadingCompanies(true);
         try {
             const response = await apiFetch("/api/v1/rag/proposals/companies");
-            const data = await response.json();
+            const data = (await readJsonBody(response)) as { companies?: Company[] } | null;
 
             if (!response.ok) {
-                throw new Error(data.error || "Failed to load companies");
+                showFailure(data, "Failed to load companies");
+                return;
             }
 
-            setCompanies(data.companies || []);
-        } catch (err: any) {
-            setError(err.message);
+            setCompanies(data?.companies || []);
+        } catch (err) {
+            showException(err);
         } finally {
             setLoadingCompanies(false);
         }
@@ -62,7 +82,7 @@ export default function ProposalGenerator() {
     const handleGenerate = async (companyName: string) => {
         setSelectedCompany(companyName);
         setIsGenerating(true);
-        setError(null);
+        clearError();
 
         try {
             const response = await apiFetch("/api/v1/rag/generate-proposal", {
@@ -71,16 +91,17 @@ export default function ProposalGenerator() {
                 body: JSON.stringify({ companyName }),
             });
 
-            const result = await response.json();
+            const result = (await readJsonBody(response)) as { slides?: ProposalSlide[] } | null;
 
             if (!response.ok) {
-                throw new Error(result.error || "Failed to generate proposal");
+                showFailure(result, "Failed to generate proposal");
+                return;
             }
 
-            setSlides(result.slides);
+            setSlides(result?.slides ?? null);
             setCurrentSlide(0);
-        } catch (err: any) {
-            setError(err.message);
+        } catch (err) {
+            showException(err);
         } finally {
             setIsGenerating(false);
         }
@@ -92,17 +113,21 @@ export default function ProposalGenerator() {
         if (!slides || !selectedCompany) return;
         setIsSaving(true);
         setSaveResult(null);
+        clearError();
         try {
             const response = await apiFetch("/api/v1/rag/proposals/save", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ slides, companyName: selectedCompany }),
             });
-            const result = await response.json();
-            if (!response.ok) throw new Error(result.error || "Failed to save");
+            const result = (await readJsonBody(response)) as { fileName: string; viewLink: string } | null;
+            if (!response.ok || !result) {
+                showFailure(result, "Failed to save");
+                return;
+            }
             setSaveResult({ fileName: result.fileName, viewLink: result.viewLink });
-        } catch (err: any) {
-            setError(err.message);
+        } catch (err) {
+            showException(err);
         } finally {
             setIsSaving(false);
         }
@@ -113,13 +138,17 @@ export default function ProposalGenerator() {
     const handleDownloadPdf = async () => {
         if (!slides || !selectedCompany) return;
         setIsDownloading(true);
+        clearError();
         try {
             const response = await apiFetch("/api/v1/rag/proposals/download", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ slides, companyName: selectedCompany }),
             });
-            if (!response.ok) throw new Error("Failed to download");
+            if (!response.ok) {
+                showFailure(await readJsonBody(response), "Failed to download");
+                return;
+            }
             const blob = await response.blob();
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement("a");
@@ -129,8 +158,8 @@ export default function ProposalGenerator() {
             a.click();
             document.body.removeChild(a);
             window.URL.revokeObjectURL(url);
-        } catch (err: any) {
-            setError(err.message);
+        } catch (err) {
+            showException(err);
         } finally {
             setIsDownloading(false);
         }
@@ -404,11 +433,18 @@ export default function ProposalGenerator() {
         return (
             <div className="proposal-container">
                 <div className="proposal-error">
-                    <h2>Something Went Wrong</h2>
+                    <h2>{driveDisconnected ? "Google Drive Not Connected" : "Something Went Wrong"}</h2>
                     <p>{error}</p>
-                    <button className="btn-retry" onClick={() => { setError(null); setSelectedCompany(null); fetchCompanies(); }}>
-                        ← Back to Companies
-                    </button>
+                    <div className="proposal-error-actions">
+                        {driveDisconnected && (
+                            <Link to="/settings" className="btn-retry">
+                                Connect Google Drive in Settings
+                            </Link>
+                        )}
+                        <button className="btn-retry" onClick={() => { clearError(); setSelectedCompany(null); fetchCompanies(); }}>
+                            {driveDisconnected ? "Try Again" : "← Back to Companies"}
+                        </button>
+                    </div>
                 </div>
             </div>
         );
@@ -433,6 +469,7 @@ export default function ProposalGenerator() {
                                     setCurrentSlide(0);
                                     setSelectedCompany(null);
                                     setSaveResult(null);
+                                    clearError();
                                 }}
                             >
                                 ← Back
@@ -475,6 +512,11 @@ export default function ProposalGenerator() {
                                         Open in Drive →
                                     </a>
                                 )}
+                            </div>
+                        )}
+                        {error && (
+                            <div className="save-error-banner" role="alert">
+                                {error}
                             </div>
                         )}
                     </div>

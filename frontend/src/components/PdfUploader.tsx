@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import { apiFetch } from "../services/apiFetch";
+import { errorMessage, readJsonBody } from "../services/problem";
 
 /** Shape of GET /api/v1/rag/ingest/{jobId} (ingestion-service's IngestJob). */
 interface IngestJob {
@@ -24,9 +25,9 @@ const PdfUploader = () => {
       // Phase 3a made ingestion asynchronous: the POST returns 202 { jobId }
       // immediately, and the job is polled until it leaves RUNNING.
       const response = await apiFetch("/api/v1/rag/ingest", { method: "POST" });
-      const data = await response.json();
+      const data = await readJsonBody(response);
       if (!response.ok) {
-        setStatus(data.error || "Failed");
+        setStatus(errorMessage(data, "Failed"));
         return;
       }
 

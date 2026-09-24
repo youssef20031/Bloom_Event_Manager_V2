@@ -4,6 +4,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { formatXmlTags } from "../utils/formatXmlTags";
 import { apiFetch } from "../services/apiFetch";
+import { errorMessage, readJsonBody } from "../services/problem";
 
 const PROMPT_SUGGESTIONS = [
   {
@@ -170,9 +171,9 @@ export default function ChatInterface() {
         body: JSON.stringify({ message: userMessage, sessionId }),
       });
 
-      const data: ChatResponse = await response.json();
+      const data = (await readJsonBody(response)) as ChatResponse | null;
 
-      if (data.status === "success" && data.answer && data.sessionId) {
+      if (data?.status === "success" && data.answer && data.sessionId) {
         setSessionId(data.sessionId);
         setMessages((prev) => [
           ...prev,
@@ -182,7 +183,7 @@ export default function ChatInterface() {
         console.error("Chat error:", data);
         setMessages((prev) => [
           ...prev,
-          { role: "model", content: `⚠️ **System Error**: ${data.message || "An unexpected error occurred."}` },
+          { role: "model", content: `⚠️ **System Error**: ${errorMessage(data, "An unexpected error occurred.")}` },
         ]);
       }
     } catch (error) {
@@ -199,11 +200,11 @@ export default function ChatInterface() {
     setUploading(true);
     try {
       const res = await apiFetch(`/api/v1/rag/chat/sessions/${sessionId}/backup`, { method: "POST" });
-      const data = await res.json();
-      if (data.status === "success") {
-        alert(`Backup saved to Drive!\nFolder: ${data.drive.folderId}`);
+      const data = (await readJsonBody(res)) as { status?: string; drive?: { folderId?: string } } | null;
+      if (data?.status === "success") {
+        alert(`Backup saved to Drive!\nFolder: ${data.drive?.folderId}`);
       } else {
-        alert("Backup failed: " + data.message);
+        alert("Backup failed: " + errorMessage(data, "An unexpected error occurred."));
       }
     } catch (err) {
       console.error("Backup error:", err);

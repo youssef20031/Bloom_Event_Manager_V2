@@ -2,6 +2,7 @@ import { useState } from "react";
 
 import { RagChunk } from "../types";
 import { apiFetch } from "../services/apiFetch";
+import { errorMessage, readJsonBody } from "../services/problem";
 
 type Props = {
   onRetrieved: (chunks: RagChunk[]) => void;
@@ -29,10 +30,10 @@ const QueryForm = ({ onRetrieved }: Props) => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ query, useAI }),
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Retrieval failed");
-      onRetrieved(data.chunks);
-      setSearchMetadata(data.metadata);
+      const data = (await readJsonBody(response)) as { chunks?: RagChunk[]; metadata?: unknown } | null;
+      if (!response.ok) throw new Error(errorMessage(data, "Retrieval failed"));
+      onRetrieved(data?.chunks ?? []);
+      setSearchMetadata(data?.metadata ?? null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
