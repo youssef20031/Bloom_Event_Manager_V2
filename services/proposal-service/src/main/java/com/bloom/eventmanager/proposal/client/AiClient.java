@@ -9,7 +9,7 @@ import com.bloom.eventmanager.proposal.client.dto.EmbedResponse;
 import com.bloom.eventmanager.proposal.client.dto.GenerateRequest;
 import com.bloom.eventmanager.proposal.client.dto.GenerateResponse;
 
-@FeignClient(name = "ai-service")
+@FeignClient(name = "ai-service", fallbackFactory = AiClientFallbackFactory.class)
 public interface AiClient {
 
     @PostMapping("/api/v1/ai/embed")

@@ -16,6 +16,8 @@ import static org.assertj.core.api.Assertions.assertThat;
         "spring.config.import=",
         "eureka.client.enabled=false",
         "spring.cloud.discovery.enabled=false",
+        "bloom.security.internal-token=test-token",
+        "spring.security.oauth2.resourceserver.jwt.jwk-set-uri=http://localhost:1/jwks",
         "bloom.ai.api-key=test-key",
         "bloom.ai.embedding-model=gemini-embedding-001",
         "bloom.ai.cache-key-prefix=bloom:"

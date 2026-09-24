@@ -11,7 +11,7 @@ import com.bloom.eventmanager.proposal.client.dto.ChunkMatch;
 import com.bloom.eventmanager.proposal.client.dto.ChunkSearchRequest;
 import com.bloom.eventmanager.proposal.client.dto.ChunksBySourcesRequest;
 
-@FeignClient(name = "knowledge-service")
+@FeignClient(name = "knowledge-service", fallbackFactory = KnowledgeClientFallbackFactory.class)
 public interface KnowledgeClient {
 
     @GetMapping("/api/v1/sources")

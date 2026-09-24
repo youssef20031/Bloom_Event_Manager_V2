@@ -13,3 +13,23 @@ bloom:
     # containing *.traineddata to use a system Tesseract install instead.
     ocr-data-path: ${TESSDATA_PATH:}
     embedding-batch-size: 20
+
+# ── Circuit breakers: a 4xx is not a breaker failure (Phase 5 review, I2) ───
+# Spring Cloud CircuitBreaker records the error *before* the fallback runs
+# (Resilience4JCircuitBreaker.getAndApplyFallback catches outside the decorated
+# supplier), so the fallback factory's 4xx passthrough alone would still let a run of
+# legitimate 404s or 401s from a peer open the breaker and short-circuit healthy
+# traffic. A well-formed client error means the peer answered, so it must count as
+# neither success nor failure. FeignClientException is Feign's own parent class for
+# every 4xx, including statuses with no dedicated subclass; 5xx (FeignServerException)
+# and connect failures (RetryableException, status -1) still count.
+#
+# Deliberately here and not in application.yml: ai-service and knowledge-service bind
+# these same properties but carry no Feign on the classpath, and a class name that
+# cannot be resolved fails property binding at startup.
+resilience4j:
+  circuitbreaker:
+    configs:
+      default:
+        ignoreExceptions:
+          - feign.FeignException$FeignClientException

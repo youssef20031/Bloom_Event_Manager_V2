@@ -27,6 +27,7 @@
         <module>platform/bloom-bom</module>
         <module>platform/bloom-common</module>
         <module>platform/bloom-events</module>
+        <module>platform/bloom-security</module>
         <module>platform/bloom-pdf</module>
         <module>infrastructure/discovery-server</module>
         <module>infrastructure/config-server</module>
@@ -51,4 +52,26 @@
             </dependency>
         </dependencies>
     </dependencyManagement>
+
+    <build>
+        <pluginManagement>
+            <plugins>
+                <!-- Every Boot module declares this plugin without executions, so
+                     managing it here makes all of them write
+                     META-INF/build-info.properties, which /actuator/info reads. -->
+                <plugin>
+                    <groupId>org.springframework.boot</groupId>
+                    <artifactId>spring-boot-maven-plugin</artifactId>
+                    <executions>
+                        <execution>
+                            <id>build-info</id>
+                            <goals>
+                                <goal>build-info</goal>
+                            </goals>
+                        </execution>
+                    </executions>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+    </build>
 </project>

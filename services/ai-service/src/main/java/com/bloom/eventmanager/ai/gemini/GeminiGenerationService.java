@@ -12,6 +12,7 @@ import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.google.genai.GoogleGenAiChatOptions;
+import org.springframework.cloud.client.circuitbreaker.CircuitBreakerFactory;
 import org.springframework.stereotype.Service;
 
 import com.bloom.eventmanager.ai.config.AiProperties;
@@ -34,10 +35,12 @@ public class GeminiGenerationService implements GenerationPort {
     private static final Logger log = LoggerFactory.getLogger(GeminiGenerationService.class);
 
     private final ChatModel chatModel;
+    private final CircuitBreakerFactory<?, ?> breakers;
     private final List<String> modelChain;
 
-    public GeminiGenerationService(ChatModel chatModel, AiProperties properties) {
+    public GeminiGenerationService(ChatModel chatModel, CircuitBreakerFactory<?, ?> breakers, AiProperties properties) {
         this.chatModel = chatModel;
+        this.breakers = breakers;
         LinkedHashSet<String> chain = new LinkedHashSet<>();
         chain.add(properties.model());
         chain.addAll(properties.fallbackModels());
@@ -49,7 +52,9 @@ public class GeminiGenerationService implements GenerationPort {
         RuntimeException last = null;
         for (String model : modelChain) {
             try {
-                ChatResponse response = chatModel.call(new Prompt(input, toChatOptions(model, options)));
+                ChatResponse response = breakers.create("gemini").run(
+                        () -> chatModel.call(new Prompt(input, toChatOptions(model, options))),
+                        GeminiGenerationService::unwrap);
                 return split(response);
             }
             catch (RuntimeException ex) {
@@ -99,4 +104,14 @@ public class GeminiGenerationService implements GenerationPort {
         String joinedThoughts = String.join("\n", thoughts).trim();
         return new GenerationResult(text.toString().trim(), joinedThoughts.isEmpty() ? null : joinedThoughts);
     }
+
+    /**
+     * Keep the SDK's original exception so GeminiErrors can still read the status
+     * code from it -- that is what decides whether to fall through to the next
+     * model in the chain rather than failing outright.
+     */
+    private static ChatResponse unwrap(Throwable failure) {
+        throw failure instanceof RuntimeException runtime ? runtime : new RuntimeException(failure);
+    }
+
 }

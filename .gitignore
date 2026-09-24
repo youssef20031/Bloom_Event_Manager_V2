@@ -32,5 +32,29 @@ build/
 ### VS Code ###
 .vscode/
 
+### Frontend ###
+frontend/node_modules/
+frontend/dist/
+
 ### Local secrets ###
 deploy/.env
+# Any .env or .env.<suffix> anywhere, with the committed template re-included.
+**/.env
+.env.*
+!deploy/.env.example
+# Drive OAuth client secret: storage-service's default GOOGLE_CREDENTIALS_PATH
+# is ./secrets/client_secret.json, relative to wherever the service is run.
+secrets/
+client_secret*.json
+# JWT key pairs: the README's openssl commands write jwt-private.pem and
+# jwt-public.pem to the current directory.
+*.pem
+
+### Local data ###
+# PDF_DIRECTORY for the Compose stack (./pdfs, relative to deploy/), and V1's
+# PDF folder when copied in for ingestion.
+deploy/pdfs/
+deploy/ISM_PDF/
+
+### Unrelated personal files kept at the repository root ###
+Claude outputs/

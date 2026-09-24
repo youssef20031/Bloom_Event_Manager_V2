@@ -7,7 +7,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import com.bloom.eventmanager.chat.client.dto.RetrieveRequest;
 import com.bloom.eventmanager.chat.client.dto.RetrieveResponse;
 
-@FeignClient(name = "retrieval-service")
+@FeignClient(name = "retrieval-service", fallbackFactory = RetrievalClientFallbackFactory.class)
 public interface RetrievalClient {
 
     @PostMapping("/api/v1/retrieve")

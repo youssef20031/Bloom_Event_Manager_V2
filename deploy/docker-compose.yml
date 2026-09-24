@@ -3,8 +3,38 @@
 #   docker compose -f deploy/docker-compose.yml --profile infra up -d
 #
 # Secrets come from deploy/.env (gitignored). Nothing sensitive belongs here.
+#
+# Published ports are bound to 127.0.0.1 with two deliberate exceptions,
+# api-gateway (8080) and frontend (3000), which are the product's front door.
+# Everything else here is an admin or datastore port with no authentication on
+# it: Eureka's registration API accepts anonymous registrations, and every
+# inter-service call now carries X-Internal-Token plus the caller's JWT, so a
+# rogue instance registered from off-box would be handed both. Config Server,
+# Neo4j, Mongo, Redis, Kafka and Zipkin are the same shape. Loopback keeps every
+# dashboard reachable from this machine -- the demo uses the Eureka UI and
+# Zipkin -- while taking them off the network.
 
 name: bloom-v2
+
+# Environment every Spring app container gets: the gateway and all seven
+# services. Only what config-repo/application.yml and the services' own
+# application.yml actually read belongs here. The gateway's signing keys and
+# the login credentials are deliberately NOT in this block: the private key
+# lives only in the gateway, and every other service validates tokens against
+# the public JWKS it publishes (JWT_JWKS_URI).
+x-service-env: &service-env
+  CONFIG_SERVER_URL: http://config-server:8888
+  EUREKA_URL: http://discovery-server:8761/eureka/
+  KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+  ZIPKIN_ENDPOINT: http://zipkin:9411/api/v2/spans
+  JWT_JWKS_URI: http://api-gateway:8080/.well-known/jwks.json
+  INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN}
+
+# Optional tuning below is passed only to the service that reads it, as
+# ${VAR:-<default>} with <default> copied exactly from that service's
+# ${VAR:<default>} placeholder. ${VAR:-} is right only where the application
+# default is itself empty; anywhere else the empty string would override the
+# application's default and break binding.
 
 services:
   neo4j:
@@ -18,8 +48,8 @@ services:
     container_name: bloom-v2-neo4j
     restart: unless-stopped
     ports:
-      - "7474:7474"
-      - "7687:7687"
+      - "127.0.0.1:7474:7474"
+      - "127.0.0.1:7687:7687"
     environment:
       NEO4J_AUTH: "${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-password}"
     volumes:
@@ -41,7 +71,7 @@ services:
     container_name: bloom-v2-mongo
     restart: unless-stopped
     ports:
-      - "27017:27017"
+      - "127.0.0.1:27017:27017"
     volumes:
       - mongo-data:/data/db
     healthcheck:
@@ -57,7 +87,7 @@ services:
     container_name: bloom-v2-redis
     restart: unless-stopped
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     command:
       - redis-server
       # Bounded memory with LRU eviction is what makes it safe to cache
@@ -93,19 +123,22 @@ services:
     container_name: bloom-v2-kafka
     restart: unless-stopped
     ports:
-      - "9092:9092"
+      - "127.0.0.1:9092:9092"
+      - "127.0.0.1:29092:29092"
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
-      # Empty host, not 0.0.0.0. In KRaft the controller listener's bind address
-      # is also validated as an advertised address, and Kafka rejects the
-      # nonroutable meta-address 0.0.0.0 there ("advertised.listeners cannot use
-      # the nonroutable meta-address"). An empty host binds all interfaces and
-      # advertises the hostname, which is what the image's own default does.
-      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      # Dual listeners since Phase 5: PLAINTEXT for other containers on the
+      # Compose network (kafka:9092), PLAINTEXT_HOST for the host machine
+      # (localhost:29092, for IDE-run services). Kafka rejects the
+      # nonroutable meta-address 0.0.0.0 in KAFKA_ADVERTISED_LISTENERS
+      # ("advertised.listeners cannot use the nonroutable meta-address"), so
+      # each listener advertises a real, reachable hostname there instead.
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,PLAINTEXT_HOST://0.0.0.0:29092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
@@ -129,13 +162,184 @@ services:
     container_name: bloom-v2-zipkin
     restart: unless-stopped
     ports:
-      - "9411:9411"
+      - "127.0.0.1:9411:9411"
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:9411/health || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 5
       start_period: 15s
+
+  # ── platform ────────────────────────────────────────────────────────────
+  config-server:
+    build: { context: .., dockerfile: deploy/Dockerfile.service, args: { MODULE_PATH: infrastructure/config-server } }
+    profiles: ["platform"]
+    environment:
+      CONFIG_REPO: file:/config-repo
+      # Best-effort span export: no depends_on on zipkin, so the platform
+      # profile still starts without infra, and an absent collector costs
+      # dropped spans, not a failed boot.
+      ZIPKIN_ENDPOINT: http://zipkin:9411/api/v2/spans
+    volumes:
+      - ../config-repo:/config-repo:ro
+    ports: ["127.0.0.1:8888:8888"]
+    mem_limit: 512m
+    healthcheck: &java-health
+      test: ["CMD", "curl", "-fsS", "http://localhost:8888/actuator/health/readiness"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 40s
+
+  discovery-server:
+    build: { context: .., dockerfile: deploy/Dockerfile.service, args: { MODULE_PATH: infrastructure/discovery-server } }
+    profiles: ["platform"]
+    environment:
+      EUREKA_HOSTNAME: discovery-server
+      ZIPKIN_ENDPOINT: http://zipkin:9411/api/v2/spans
+    ports: ["127.0.0.1:8761:8761"]
+    mem_limit: 512m
+    healthcheck:
+      <<: *java-health
+      test: ["CMD", "curl", "-fsS", "http://localhost:8761/actuator/health/readiness"]
+
+  api-gateway:
+    build: { context: .., dockerfile: deploy/Dockerfile.service, args: { MODULE_PATH: infrastructure/api-gateway } }
+    profiles: ["platform"]
+    environment:
+      <<: *service-env
+      # Gateway-only: the login it checks and the key pair it signs with.
+      APP_AUTH_USER: ${APP_AUTH_USER}
+      APP_AUTH_PASSWORD: ${APP_AUTH_PASSWORD}
+      JWT_PRIVATE_KEY_PEM: ${JWT_PRIVATE_KEY_PEM:-}
+      JWT_PUBLIC_KEY_PEM: ${JWT_PUBLIC_KEY_PEM:-}
+      JWT_TTL: ${JWT_TTL:-PT12H}
+    ports: ["8080:8080"]
+    depends_on:
+      config-server: { condition: service_healthy }
+      discovery-server: { condition: service_healthy }
+    mem_limit: 512m
+    healthcheck:
+      <<: *java-health
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/actuator/health/readiness"]
+
+  # ── apps ────────────────────────────────────────────────────────────────
+  ai-service:
+    build: { context: .., dockerfile: deploy/Dockerfile.service, args: { MODULE_PATH: services/ai-service } }
+    profiles: ["apps"]
+    environment:
+      <<: *service-env
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      REDIS_URL: redis://redis:6379
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3-flash-preview}
+      GEMINI_FALLBACK_MODELS: ${GEMINI_FALLBACK_MODELS:-gemini-2.5-flash,gemini-2.0-flash-001}
+      GEMINI_EMBEDDING_MODEL: ${GEMINI_EMBEDDING_MODEL:-gemini-embedding-001}
+    depends_on: { api-gateway: { condition: service_healthy }, redis: { condition: service_healthy } }
+    mem_limit: 512m
+    healthcheck:
+      <<: *java-health
+      test: ["CMD", "curl", "-fsS", "http://localhost:8081/actuator/health/readiness"]
+
+  knowledge-service:
+    build: { context: .., dockerfile: deploy/Dockerfile.service, args: { MODULE_PATH: services/knowledge-service } }
+    profiles: ["apps"]
+    environment:
+      <<: *service-env
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: ${NEO4J_USER:-neo4j}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-password}
+    depends_on: { api-gateway: { condition: service_healthy }, neo4j: { condition: service_healthy }, kafka: { condition: service_healthy } }
+    mem_limit: 512m
+    healthcheck:
+      <<: *java-health
+      test: ["CMD", "curl", "-fsS", "http://localhost:8082/actuator/health/readiness"]
+
+  ingestion-service:
+    build: { context: .., dockerfile: services/ingestion-service/Dockerfile }
+    profiles: ["apps"]
+    environment:
+      <<: *service-env
+      PDF_DIRECTORY: /data/pdfs
+    volumes:
+      - ${PDF_DIRECTORY:-./pdfs}:/data/pdfs:ro
+    depends_on: { api-gateway: { condition: service_healthy }, kafka: { condition: service_healthy } }
+    mem_limit: 768m
+    healthcheck:
+      <<: *java-health
+      test: ["CMD", "curl", "-fsS", "http://localhost:8083/actuator/health/readiness"]
+
+  retrieval-service:
+    build: { context: .., dockerfile: deploy/Dockerfile.service, args: { MODULE_PATH: services/retrieval-service } }
+    profiles: ["apps"]
+    environment:
+      <<: *service-env
+      RAG_TOP_K: ${RAG_TOP_K:-15}
+    depends_on: { api-gateway: { condition: service_healthy } }
+    mem_limit: 512m
+    healthcheck:
+      <<: *java-health
+      test: ["CMD", "curl", "-fsS", "http://localhost:8084/actuator/health/readiness"]
+
+  chat-service:
+    build: { context: .., dockerfile: deploy/Dockerfile.service, args: { MODULE_PATH: services/chat-service } }
+    profiles: ["apps"]
+    environment:
+      <<: *service-env
+      MONGO_URI: mongodb://mongodb:27017
+      MONGO_CHAT_DB: ${MONGO_CHAT_DB:-chatdb}
+      RAG_TOP_K: ${RAG_TOP_K:-15}
+    depends_on: { api-gateway: { condition: service_healthy }, mongodb: { condition: service_healthy } }
+    mem_limit: 512m
+    healthcheck:
+      <<: *java-health
+      test: ["CMD", "curl", "-fsS", "http://localhost:8085/actuator/health/readiness"]
+
+  storage-service:
+    build: { context: .., dockerfile: deploy/Dockerfile.service, args: { MODULE_PATH: services/storage-service } }
+    profiles: ["apps"]
+    environment:
+      <<: *service-env
+      MONGO_URI: mongodb://mongodb:27017
+      MONGO_TOKEN_DB: ${MONGO_TOKEN_DB:-tokendb}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GOOGLE_DRIVE_FOLDER_ID: ${GOOGLE_DRIVE_FOLDER_ID:-}
+      GOOGLE_OAUTH_REDIRECT_URI: http://localhost:8080/api/rag/auth/google/callback
+      FRONTEND_URL: http://localhost:3000
+      DRIVE_SYNC_INTERVAL_MS: ${DRIVE_SYNC_INTERVAL_MS:-300000}
+      DRIVE_SYNC_INITIAL_DELAY_MS: ${DRIVE_SYNC_INITIAL_DELAY_MS:-60000}
+    depends_on: { api-gateway: { condition: service_healthy }, mongodb: { condition: service_healthy }, kafka: { condition: service_healthy } }
+    mem_limit: 512m
+    healthcheck:
+      <<: *java-health
+      test: ["CMD", "curl", "-fsS", "http://localhost:8086/actuator/health/readiness"]
+
+  proposal-service:
+    build: { context: .., dockerfile: deploy/Dockerfile.service, args: { MODULE_PATH: services/proposal-service } }
+    profiles: ["apps"]
+    environment: *service-env
+    depends_on: { api-gateway: { condition: service_healthy } }
+    mem_limit: 512m
+    healthcheck:
+      <<: *java-health
+      test: ["CMD", "curl", "-fsS", "http://localhost:8087/actuator/health/readiness"]
+
+  frontend:
+    build: { context: ../frontend }
+    profiles: ["apps"]
+    ports: ["3000:80"]
+    depends_on: { api-gateway: { condition: service_healthy } }
+    healthcheck:
+      # The final stage is nginx:alpine, whose busybox provides wget (no curl).
+      # 127.0.0.1, not localhost: nginx.conf listens on IPv4 port 80 only, and
+      # localhost can resolve to ::1 first. "/" serves index.html from the
+      # static root, so this checks nginx is up and the built bundle is there;
+      # it does not reach through /api/ to the gateway.
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:80/ || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
 
 volumes:
   neo4j-data:

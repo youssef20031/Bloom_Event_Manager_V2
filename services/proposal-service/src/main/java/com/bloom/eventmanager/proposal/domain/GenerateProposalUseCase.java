@@ -83,7 +83,7 @@ public class GenerateProposalUseCase {
             chatContext = sb.toString();
         }
         catch (RuntimeException ex) {
-            log.warn("Could not retrieve chat history, continuing without it: {}", ex.getMessage());
+            log.warn("Could not retrieve chat history, continuing without it: {}", ex.getMessage(), ex);
         }
 
         // Step 4: teambuilding knowledge via a vector search

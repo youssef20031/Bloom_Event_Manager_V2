@@ -11,7 +11,10 @@ import org.springframework.test.web.reactive.server.WebTestClient;
         properties = {
                 "spring.config.import=",
                 "eureka.client.enabled=false",
-                "spring.cloud.discovery.enabled=false"
+                "spring.cloud.discovery.enabled=false",
+                "bloom.auth.user=bloom",
+                "bloom.auth.password=correct horse battery staple",
+                "bloom.auth.internal-token=internal-secret"
         })
 @AutoConfigureWebTestClient
 class LegacyOAuthRedirectControllerTest {

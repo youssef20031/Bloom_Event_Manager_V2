@@ -84,3 +84,12 @@ management:
     health:
       probes:
         enabled: true
+
+bloom:
+  auth:
+    user: ${APP_AUTH_USER}
+    password: ${APP_AUTH_PASSWORD}
+    private-key-pem: ${JWT_PRIVATE_KEY_PEM:}
+    public-key-pem: ${JWT_PUBLIC_KEY_PEM:}
+    token-ttl: ${JWT_TTL:PT12H}
+    internal-token: ${INTERNAL_SERVICE_TOKEN}

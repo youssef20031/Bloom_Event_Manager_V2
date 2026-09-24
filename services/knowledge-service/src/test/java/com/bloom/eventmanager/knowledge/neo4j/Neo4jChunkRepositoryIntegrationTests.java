@@ -25,6 +25,8 @@ import static org.assertj.core.api.Assertions.assertThat;
         "spring.config.import=",
         "eureka.client.enabled=false",
         "spring.cloud.discovery.enabled=false",
+        "bloom.security.internal-token=test-token",
+        "spring.security.oauth2.resourceserver.jwt.jwk-set-uri=http://localhost:1/jwks",
         // No Kafka container here, so keep the listener containers parked; otherwise
         // they retry localhost:9092 for the whole run and bury the Neo4j output.
         "spring.kafka.listener.auto-startup=false",

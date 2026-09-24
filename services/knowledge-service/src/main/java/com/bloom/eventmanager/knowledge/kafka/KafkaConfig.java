@@ -42,7 +42,7 @@ public class KafkaConfig {
     }
 
     /**
-     * Retry with backoff, then park the record on {@code <topic>.DLT}. Boot
+     * Retry with backoff, then park the record on {@code <topic>-dlt}. Boot
      * wires any CommonErrorHandler bean into the listener container factory.
      */
     @Bean

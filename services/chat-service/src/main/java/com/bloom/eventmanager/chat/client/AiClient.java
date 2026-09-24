@@ -7,7 +7,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import com.bloom.eventmanager.chat.client.dto.GenerateRequest;
 import com.bloom.eventmanager.chat.client.dto.GenerateResponse;
 
-@FeignClient(name = "ai-service")
+@FeignClient(name = "ai-service", fallbackFactory = AiClientFallbackFactory.class)
 public interface AiClient {
 
     @PostMapping("/api/v1/ai/generate")

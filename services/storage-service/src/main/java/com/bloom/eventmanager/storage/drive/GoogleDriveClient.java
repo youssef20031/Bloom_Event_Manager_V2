@@ -13,9 +13,12 @@ import com.google.api.services.drive.model.File;
 import com.google.api.services.drive.model.FileList;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.cloud.client.circuitbreaker.CircuitBreakerFactory;
 import org.springframework.stereotype.Component;
 
+import com.bloom.eventmanager.common.error.BloomException;
 import com.bloom.eventmanager.common.error.ExternalServiceException;
+import com.bloom.eventmanager.common.feign.FeignFallbacks;
 import com.bloom.eventmanager.storage.oauth.DriveAuthManager;
 
 /** V1's GoogleDriveFileOperations over the Drive v3 Java client. */
@@ -27,11 +30,13 @@ public class GoogleDriveClient implements DriveClient {
     private static final String FILE_FIELDS = "files(id, name, mimeType, modifiedTime, size)";
 
     private final DriveAuthManager auth;
+    private final CircuitBreakerFactory<?, ?> breakers;
     private final NetHttpTransport transport = new NetHttpTransport();
     private final GsonFactory jsonFactory = GsonFactory.getDefaultInstance();
 
-    public GoogleDriveClient(DriveAuthManager auth) {
+    public GoogleDriveClient(DriveAuthManager auth, CircuitBreakerFactory<?, ?> breakers) {
         this.auth = auth;
+        this.breakers = breakers;
     }
 
     private Drive drive() {
@@ -145,13 +150,28 @@ public class GoogleDriveClient implements DriveClient {
     }
 
     private <T> T call(String operation, DriveCall<T> call) {
-        try {
-            return call.run();
-        }
-        catch (IOException ex) {
-            auth.handleAuthError(ex);
-            throw new ExternalServiceException("Google Drive " + operation + " failed", ex);
-        }
+        return breakers.create("drive").run(
+                () -> {
+                    try {
+                        return call.run();
+                    }
+                    catch (IOException ex) {
+                        auth.handleAuthError(ex);
+                        throw new ExternalServiceException("Google Drive " + operation + " failed", ex);
+                    }
+                },
+                failure -> {
+                    // A failure that already carries our own diagnosis passes straight through:
+                    // the IOException wrapped above, or DriveNotAuthenticatedException from
+                    // credential(), whose 401 and authUrl send the SPA to re-auth. Anything
+                    // else is described by what actually happened -- "circuit open" only
+                    // when the breaker rejected the call, "timed out" for the time limiter.
+                    if (failure instanceof BloomException diagnosed) {
+                        throw diagnosed;
+                    }
+                    throw new ExternalServiceException(
+                            FeignFallbacks.unavailableMessage("Google Drive " + operation, failure), failure);
+                });
     }
 
     @FunctionalInterface

@@ -30,7 +30,7 @@ public class DriveStartup implements ApplicationRunner {
         try {
             auth.loadCredentials();
             if (auth.isAuthenticated()) {
-                scheduler.start(properties.syncIntervalMs());
+                scheduler.start(properties.syncIntervalMs(), properties.syncInitialDelayMs());
             }
         }
         catch (RuntimeException ex) {

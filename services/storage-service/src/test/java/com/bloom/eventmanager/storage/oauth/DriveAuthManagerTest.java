@@ -17,7 +17,7 @@ import static org.mockito.Mockito.when;
 class DriveAuthManagerTest {
 
     private final StorageProperties properties = new StorageProperties("cid", "csecret", "",
-            "http://localhost:8080/api/rag/auth/google/callback", "root", 300_000L, "http://localhost:5173",
+            "http://localhost:8080/api/rag/auth/google/callback", "root", 300_000L, 60_000L, "http://localhost:5173",
             List.of("https://www.googleapis.com/auth/drive.readonly", "https://www.googleapis.com/auth/drive.file"), "default");
     private final CredentialsResolver resolver = mock(CredentialsResolver.class);
     private final TokenStore tokenStore = mock(TokenStore.class);

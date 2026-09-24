@@ -19,7 +19,9 @@ import static org.mockito.Mockito.when;
 @SpringBootTest(properties = {
         "spring.config.import=",
         "eureka.client.enabled=false",
-        "spring.cloud.discovery.enabled=false"
+        "spring.cloud.discovery.enabled=false",
+        "bloom.security.internal-token=test-token",
+        "spring.security.oauth2.resourceserver.jwt.jwk-set-uri=http://localhost:1/jwks",
 })
 class QueryVariationCachingTests {
 

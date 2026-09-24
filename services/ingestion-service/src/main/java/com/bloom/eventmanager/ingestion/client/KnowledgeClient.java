@@ -6,7 +6,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 
 import com.bloom.eventmanager.ingestion.client.dto.DeleteDocumentResponse;
 
-@FeignClient(name = "knowledge-service")
+@FeignClient(name = "knowledge-service", fallbackFactory = KnowledgeClientFallbackFactory.class)
 public interface KnowledgeClient {
 
     @DeleteMapping("/api/v1/documents")

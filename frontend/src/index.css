@@ -1,0 +1,15 @@
+/**
+ * Main Entry Styles
+ * Bloom Event Management Platform
+ * 
+ * This is the entry point for all application styles.
+ * Order matters for the CSS cascade.
+ */
+
+/* 1. Design Tokens - Foundation variables */
+@import './styles/design-tokens.css';
+
+/* 2. Global Styles - Reset and base styles */
+@import './styles/global.css';
+
+/* Legacy styles will be phased out as we complete the redesign */

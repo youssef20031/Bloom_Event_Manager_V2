@@ -4,7 +4,9 @@ import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
+import com.bloom.eventmanager.common.error.BloomException;
 import com.bloom.eventmanager.common.error.ExternalServiceException;
+import com.bloom.eventmanager.common.error.ServiceUnavailableException;
 import com.bloom.eventmanager.retrieval.client.AiClient;
 import com.bloom.eventmanager.retrieval.client.KnowledgeClient;
 import com.bloom.eventmanager.retrieval.client.dto.ChunkMatch;
@@ -32,7 +34,7 @@ class RetrievalServiceTest {
     private final QueryVariationService variations = mock(QueryVariationService.class);
     private final ReRankService reRank = mock(ReRankService.class);
     private final RetrievalService service = new RetrievalService(
-            ai, knowledge, variations, reRank, new RetrievalProperties(3));
+            ai, knowledge, variations, reRank, topK(3));
 
     @Test
     void aiPathSearchesBothVariationsDedupesReRanksAndTruncates() {
@@ -149,6 +151,44 @@ class RetrievalServiceTest {
 
         assertThatThrownBy(() -> service.retrieve("q", null, null, false))
                 .isInstanceOf(ExternalServiceException.class);
+    }
+
+    // A fallback factory has already classified these (and chosen the message); wrapping
+    // them again as "Could not obtain query embedding..." / "Vector search failed..." threw
+    // that diagnosis away. Same idiom as proposal-service's GenerateProposalUseCase.safely().
+
+    @Test
+    void anEmbeddingFailureTheFallbackAlreadyClassifiedIsRethrownUnchanged() {
+        ExternalServiceException classified = new ExternalServiceException("ai-service unavailable (circuit open)", null);
+        when(ai.embedBatch(any())).thenThrow(classified);
+
+        assertThatThrownBy(() -> service.retrieve("q", null, null, false)).isSameAs(classified);
+    }
+
+    @Test
+    void aSearchFailureTheFallbackAlreadyClassifiedIsRethrownUnchanged() {
+        ExternalServiceException classified = new ExternalServiceException("knowledge-service unavailable (timed out)", null);
+        when(ai.embedBatch(any())).thenReturn(new EmbedBatchResponse(List.of(SPECIFIC_VEC)));
+        when(knowledge.search(any())).thenThrow(classified);
+
+        assertThatThrownBy(() -> service.retrieve("q", null, null, false)).isSameAs(classified);
+    }
+
+    @Test
+    void onTheAiPathAClassifiedSearchFailureSurvivesTheConcurrentSearchesToo() {
+        BloomException classified = new ServiceUnavailableException("knowledge-service unavailable (circuit open)", null);
+        when(variations.variations("q")).thenReturn(SearchVariations.same("q"));
+        when(ai.embedBatch(any())).thenReturn(new EmbedBatchResponse(List.of(SPECIFIC_VEC)));
+        when(knowledge.search(any())).thenThrow(classified);
+
+        assertThatThrownBy(() -> service.retrieve("q", null, null, true)).isSameAs(classified);
+    }
+
+    private static RetrievalProperties topK(int topK) {
+        RetrievalProperties properties = new RetrievalProperties();
+        properties.setTopK(topK);
+        properties.afterPropertiesSet(); // what the container does once the bound value validates
+        return properties;
     }
 
     private static ChunkMatch chunk(String id) {

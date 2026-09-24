@@ -1,0 +1,8 @@
+# COPY . . runs after npm ci. Without these, the host's node_modules -- built
+# on Windows, with platform-specific binaries -- would overwrite the Linux
+# ones npm ci just installed, and a stale dist/ would shadow the fresh build.
+node_modules
+dist
+# Local Vite env files. COPY . . would otherwise bake whatever they hold into
+# the production bundle, and anything a bundle holds is public.
+.env*

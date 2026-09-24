@@ -20,6 +20,7 @@ import com.bloom.eventmanager.chat.client.dto.ChatBackupResponse;
 import com.bloom.eventmanager.chat.domain.ChatSessionDocument;
 import com.bloom.eventmanager.chat.domain.ChatSessionStore;
 import com.bloom.eventmanager.chat.pdf.ChatPdfRenderer;
+import com.bloom.eventmanager.common.error.BloomException;
 import com.bloom.eventmanager.common.error.ExternalServiceException;
 import com.bloom.eventmanager.common.error.NotFoundException;
 
@@ -84,6 +85,9 @@ public class SessionController {
         }
         catch (feign.FeignException.Unauthorized unauthorized) {
             throw new DriveNotAuthenticated();
+        }
+        catch (BloomException ex) {
+            throw ex;
         }
         catch (RuntimeException ex) {
             throw new ExternalServiceException("Chat backup upload failed", ex);
