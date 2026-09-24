@@ -66,7 +66,7 @@ ones each service's own `config-repo/*.yml` sets; the Compose healthchecks in
 | Module | Port | Owns | Purpose |
 |---|---|---|---|
 | `infrastructure/discovery-server` | 8761 | — | Eureka registry |
-| `infrastructure/config-server` | 8888 | `config-repo/` | Config Server, native (filesystem) backend |
+| `infrastructure/config-server` | 8888 | `config-repo/` | Config Server, native (filesystem) backend, baked into the image |
 | `infrastructure/api-gateway` | 8080 | the JWT signing key | Routing, login, JWKS, internal-token stamping |
 | `services/ai-service` | 8081 | Redis | Gemini embedding and generation, cached |
 | `services/knowledge-service` | 8082 | Neo4j | Chunks, documents, Drive-file metadata, vector search |
@@ -195,13 +195,23 @@ Testcontainers-backed tests (Neo4j, Kafka, MongoDB) skip when the Docker daemon
 is down rather than failing, so a green build without Docker covers less than a
 green build with it. Start Docker before trusting the number.
 
-### Two things that look like misconfiguration and are not
+### Three things that look like misconfiguration and are not
 
-The Config Server reads `config-repo/` from the repository root.
-`spring-boot:run` defaults its working directory to the module being run, so the
-config-server module pins `<workingDirectory>` to the multi-module root —
-without that, the native backend resolves `file:./config-repo` inside
-`infrastructure/config-server/` and silently serves zero property sources.
+From the IDE or any other host run, the Config Server reads `config-repo/` from
+the repository root. `spring-boot:run` defaults its working directory to the
+module being run, so the config-server module pins `<workingDirectory>` to the
+multi-module root — without that, the native backend resolves
+`file:./config-repo` inside `infrastructure/config-server/` and silently serves
+zero property sources.
+
+`config-server` has no `volumes:` entry in `deploy/docker-compose.yml`. That is
+not a forgotten bind mount: `config-repo/` is copied into the image at build
+time (`deploy/Dockerfile.service`, target `config-server`), so the container
+needs no path from the host at all — `docker inspect … --format '{{json
+.Mounts}}'` reports `[]`. A config edit takes effect either with
+`docker compose … up -d --build config-server` (rebuilds only that last layer,
+seconds) or, for live edits with no rebuild, `docker compose … watch
+config-server`, which syncs `config-repo/` into the running container.
 
 A 503 from the gateway on the first attempt after startup is normal. Eureka
 caches its registry response for 30s and clients refresh on their own interval,
@@ -342,7 +352,7 @@ Gateway and platform:
 | `JWT_TTL` | `PT12H` | api-gateway only. Token lifetime |
 | `JWT_JWKS_URI` | `http://localhost:8080/.well-known/jwks.json` | Where services fetch the public key |
 | `CONFIG_SERVER_URL` | `http://localhost:8888` | Config Server for `spring.config.import` |
-| `CONFIG_REPO` | `file:./config-repo` | config-server only. Its native search location |
+| `CONFIG_REPO` | `file:./config-repo` | config-server only. Its native search location. In Docker the image sets it to `file:/config-repo` (baked in at build time); this default is what an IDE or host run falls back to |
 | `EUREKA_URL` | `http://localhost:8761/eureka/` | Registry |
 | `EUREKA_HOSTNAME` | `localhost` | discovery-server only. The registry's own advertised hostname |
 | `KAFKA_BOOTSTRAP_SERVERS` | `localhost:29092` | `kafka:9092` inside Compose |

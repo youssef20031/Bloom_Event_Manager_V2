@@ -15,7 +15,7 @@ COPY services services
 # with "Temporary failure in name resolution". The cache is shared across images.
 RUN --mount=type=cache,target=/root/.m2/repository,sharing=locked mvn -q -pl ${MODULE_PATH} -am -DskipTests package
 
-FROM eclipse-temurin:25-jre
+FROM eclipse-temurin:25-jre AS runtime
 ARG MODULE_PATH
 # curl for the Compose healthcheck against /actuator/health/readiness.
 RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
@@ -23,3 +23,16 @@ ENV JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=75"
 WORKDIR /app
 COPY --from=build /workspace/${MODULE_PATH}/target/*.jar app.jar
 ENTRYPOINT ["java", "-jar", "/app/app.jar"]
+
+# The Config Server's image also carries the configuration it serves, so Compose
+# needs no bind mount -- which Docker Desktop only allows for drives shared in its
+# File Sharing settings. Deliberately the last layer: a config-only edit leaves
+# every layer above it, the Maven stage included, cached, so it rebuilds in
+# seconds. Selected in Compose with `target: config-server`.
+FROM runtime AS config-server
+COPY config-repo /config-repo
+ENV CONFIG_REPO=file:/config-repo
+
+# The default target is the last stage, so this must stay last: every other
+# service builds exactly the runtime image it built before.
+FROM runtime

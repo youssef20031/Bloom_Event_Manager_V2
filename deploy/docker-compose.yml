@@ -172,16 +172,25 @@ services:
 
   # ── platform ────────────────────────────────────────────────────────────
   config-server:
-    build: { context: .., dockerfile: deploy/Dockerfile.service, args: { MODULE_PATH: infrastructure/config-server } }
+    build: { context: .., dockerfile: deploy/Dockerfile.service, target: config-server, args: { MODULE_PATH: infrastructure/config-server } }
     profiles: ["platform"]
     environment:
-      CONFIG_REPO: file:/config-repo
       # Best-effort span export: no depends_on on zipkin, so the platform
       # profile still starts without infra, and an absent collector costs
       # dropped spans, not a failed boot.
       ZIPKIN_ENDPOINT: http://zipkin:9411/api/v2/spans
-    volumes:
-      - ../config-repo:/config-repo:ro
+    # No volume: config-repo/ is baked into the image (deploy/Dockerfile.service,
+    # target config-server). For live edits run
+    #   docker compose -f deploy/docker-compose.yml --profile platform watch config-server
+    # (or `up --watch`): Compose copies each changed file into the running
+    # container through the Docker API, which needs no file sharing either, and
+    # the native backend re-reads its files on every request. Without Watch, an
+    # edit takes `up -d --build config-server`, which rebuilds only the last layer.
+    develop:
+      watch:
+        - action: sync
+          path: ../config-repo
+          target: /config-repo
     ports: ["127.0.0.1:8888:8888"]
     mem_limit: 512m
     healthcheck: &java-health
