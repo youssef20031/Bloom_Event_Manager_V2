@@ -13,6 +13,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import com.bloom.eventmanager.common.error.BloomException;
 import com.bloom.eventmanager.common.error.ExternalServiceException;
 import com.bloom.eventmanager.retrieval.client.AiClient;
 import com.bloom.eventmanager.retrieval.client.KnowledgeClient;
@@ -96,6 +97,12 @@ public class RetrievalService {
         try {
             return ai.embedBatch(new EmbedBatchRequest(texts)).embeddings();
         }
+        catch (BloomException ex) {
+            // Already classified -- by AiClientFallbackFactory, with the cause in its
+            // message. Re-wrapping it here threw that diagnosis away. Same idiom as
+            // proposal-service's GenerateProposalUseCase.safely().
+            throw ex;
+        }
         catch (RuntimeException ex) {
             throw new ExternalServiceException("Could not obtain query embedding from ai-service", ex);
         }
@@ -104,6 +111,9 @@ public class RetrievalService {
     private List<ChunkMatch> search(float[] embedding, int topK) {
         try {
             return knowledge.search(new ChunkSearchRequest(embedding, topK));
+        }
+        catch (BloomException ex) {
+            throw ex; // already classified, as in embed()
         }
         catch (RuntimeException ex) {
             throw new ExternalServiceException("Vector search failed in knowledge-service", ex);
@@ -126,8 +136,8 @@ public class RetrievalService {
                 throw new ExternalServiceException("Interrupted while searching", ex);
             }
             catch (ExecutionException ex) {
-                if (ex.getCause() instanceof ExternalServiceException external) {
-                    throw external;
+                if (ex.getCause() instanceof BloomException classified) {
+                    throw classified;
                 }
                 throw new ExternalServiceException("Vector search failed in knowledge-service", ex.getCause());
             }

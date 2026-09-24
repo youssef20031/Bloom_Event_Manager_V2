@@ -43,8 +43,15 @@ bloom:
 management:
   endpoints:
     web:
+      # `refresh` lets a running service pick up an edited config-repo file:
+      # POST /actuator/refresh re-reads the Config Server and rebinds every
+      # @ConfigurationProperties bean (e.g. bloom.retrieval.topK). Exposed on
+      # every service that imports this file, which is fine: bloom-security (and
+      # the gateway's own chain) leave only /actuator/health/** open, so the POST
+      # must be authenticated -- X-Internal-Token on the services, a JWT anywhere --
+      # and an anonymous one is a 401.
       exposure:
-        include: health,info,metrics
+        include: health,info,metrics,refresh
   endpoint:
     health:
       # `when-authorized`, not `always`: /actuator/health/** is permit-all so the
