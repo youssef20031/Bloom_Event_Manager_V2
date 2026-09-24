@@ -34,6 +34,16 @@ eureka:
   instance:
     prefer-ip-address: true
 
+# POST /actuator/refresh rebinds every @ConfigurationProperties bean, and Spring
+# Cloud 5 first resets each one from a fresh default instance. EurekaInstanceConfigBean's
+# no-arg constructor leaves hostname and ipAddress null -- InetUtils detects them at
+# startup, nothing binds them -- so a refresh blanked them, the rebuilt Eureka client
+# registered "<SERVICE>/null", got a 400, and the service dropped out of discovery.
+# Seen live on 2026-09-24: retrieval-service vanished from Eureka and the gateway
+# answered /retrieve with 503. Setting this property replaces its default, so the
+# default's Hikari entry is repeated.
+spring.cloud.refresh.never-refreshable: com.zaxxer.hikari.HikariDataSource,org.springframework.cloud.netflix.eureka.EurekaInstanceConfigBean
+
 bloom:
   security:
     # Stamped by the gateway on forwarded requests; lets Kafka-triggered
