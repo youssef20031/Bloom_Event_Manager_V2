@@ -36,6 +36,6 @@ public class RetrievalClientFallbackFactory implements FallbackFactory<Retrieval
 
     private static RuntimeException failure(Throwable cause) {
         return FeignFallbacks.failure(cause,
-                () -> new ServiceUnavailableException("retrieval-service unavailable (circuit open)", cause));
+                () -> new ServiceUnavailableException(FeignFallbacks.unavailableMessage("retrieval-service", cause), cause));
     }
 }

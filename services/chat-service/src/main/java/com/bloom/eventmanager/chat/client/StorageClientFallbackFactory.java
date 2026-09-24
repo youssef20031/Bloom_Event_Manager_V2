@@ -38,6 +38,6 @@ public class StorageClientFallbackFactory implements FallbackFactory<StorageClie
 
     private static RuntimeException failure(Throwable cause) {
         return FeignFallbacks.failure(cause,
-                () -> new ServiceUnavailableException("storage-service unavailable (circuit open)", cause));
+                () -> new ServiceUnavailableException(FeignFallbacks.unavailableMessage("storage-service", cause), cause));
     }
 }

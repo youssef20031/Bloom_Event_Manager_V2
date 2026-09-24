@@ -16,7 +16,9 @@ import org.slf4j.LoggerFactory;
 import org.springframework.cloud.client.circuitbreaker.CircuitBreakerFactory;
 import org.springframework.stereotype.Component;
 
+import com.bloom.eventmanager.common.error.BloomException;
 import com.bloom.eventmanager.common.error.ExternalServiceException;
+import com.bloom.eventmanager.common.feign.FeignFallbacks;
 import com.bloom.eventmanager.storage.oauth.DriveAuthManager;
 
 /** V1's GoogleDriveFileOperations over the Drive v3 Java client. */
@@ -159,12 +161,16 @@ public class GoogleDriveClient implements DriveClient {
                     }
                 },
                 failure -> {
-                    // A failure that already carries our own diagnosis passes straight through;
-                    // anything else means the breaker itself rejected the call.
-                    if (failure instanceof ExternalServiceException external) {
-                        throw external;
+                    // A failure that already carries our own diagnosis passes straight through:
+                    // the IOException wrapped above, or DriveNotAuthenticatedException from
+                    // credential(), whose 401 and authUrl send the SPA to re-auth. Anything
+                    // else is described by what actually happened -- "circuit open" only
+                    // when the breaker rejected the call, "timed out" for the time limiter.
+                    if (failure instanceof BloomException diagnosed) {
+                        throw diagnosed;
                     }
-                    throw new ExternalServiceException("Google Drive " + operation + " unavailable (circuit open)", failure);
+                    throw new ExternalServiceException(
+                            FeignFallbacks.unavailableMessage("Google Drive " + operation, failure), failure);
                 });
     }
 

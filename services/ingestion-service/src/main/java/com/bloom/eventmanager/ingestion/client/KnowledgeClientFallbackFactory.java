@@ -11,7 +11,7 @@ import com.bloom.eventmanager.ingestion.client.dto.DeleteDocumentResponse;
  * Runs when knowledge-service is down or its breaker is open. Ingestion's work is driven
  * by a Kafka listener, so throwing here (rather than pretending the stale chunks were
  * deleted) lets the exception propagate to Spring Kafka's DefaultErrorHandler, which
- * retries and eventually routes the record to the .DLT topic. Returning an empty result
+ * retries and eventually routes the record to the -dlt dead-letter topic. Returning an empty result
  * instead would silently mark a document as ingested when it was not.
  *
  * <p>A {@code FallbackFactory} rather than a plain fallback because the invocation
@@ -36,6 +36,6 @@ public class KnowledgeClientFallbackFactory implements FallbackFactory<Knowledge
 
     private static RuntimeException failure(Throwable cause) {
         return FeignFallbacks.failure(cause,
-                () -> new ExternalServiceException("knowledge-service unavailable (circuit open)", cause));
+                () -> new ExternalServiceException(FeignFallbacks.unavailableMessage("knowledge-service", cause), cause));
     }
 }

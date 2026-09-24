@@ -43,6 +43,6 @@ public class AiClientFallbackFactory implements FallbackFactory<AiClient> {
 
     private static RuntimeException failure(Throwable cause) {
         return FeignFallbacks.failure(cause,
-                () -> new ServiceUnavailableException("ai-service unavailable (circuit open)", cause));
+                () -> new ServiceUnavailableException(FeignFallbacks.unavailableMessage("ai-service", cause), cause));
     }
 }

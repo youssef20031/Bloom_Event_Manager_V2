@@ -49,6 +49,6 @@ public class KnowledgeClientFallbackFactory implements FallbackFactory<Knowledge
 
     private static RuntimeException failure(Throwable cause) {
         return FeignFallbacks.failure(cause,
-                () -> new ServiceUnavailableException("knowledge-service unavailable (circuit open)", cause));
+                () -> new ServiceUnavailableException(FeignFallbacks.unavailableMessage("knowledge-service", cause), cause));
     }
 }

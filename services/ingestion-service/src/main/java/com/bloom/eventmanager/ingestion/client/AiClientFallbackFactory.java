@@ -12,7 +12,7 @@ import com.bloom.eventmanager.ingestion.client.dto.EmbedBatchResponse;
  * Runs when ai-service is down or its breaker is open. Ingestion's work is driven by a
  * Kafka listener, so throwing here (rather than returning an empty embedding) lets the
  * exception propagate to Spring Kafka's DefaultErrorHandler, which retries and eventually
- * routes the record to the .DLT topic. Returning empty results instead would silently
+ * routes the record to the -dlt dead-letter topic. Returning empty results instead would silently
  * mark a document as ingested when it was not.
  *
  * <p>A {@code FallbackFactory} rather than a plain fallback because the invocation
@@ -37,6 +37,6 @@ public class AiClientFallbackFactory implements FallbackFactory<AiClient> {
 
     private static RuntimeException failure(Throwable cause) {
         return FeignFallbacks.failure(cause,
-                () -> new ExternalServiceException("ai-service unavailable (circuit open)", cause));
+                () -> new ExternalServiceException(FeignFallbacks.unavailableMessage("ai-service", cause), cause));
     }
 }

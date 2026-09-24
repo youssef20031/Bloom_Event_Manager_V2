@@ -1,9 +1,16 @@
 package com.bloom.eventmanager.common.feign;
 
 import java.io.IOException;
+import java.net.ConnectException;
+import java.net.SocketTimeoutException;
+import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeoutException;
 
+import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
+import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import org.junit.jupiter.api.Test;
 
 import feign.FeignException;
@@ -71,6 +78,80 @@ class FeignFallbacksTest {
                 .isInstanceOf(ServiceUnavailableException.class);
         assertThat(FeignFallbacks.failure(null, UNAVAILABLE))
                 .isInstanceOf(ServiceUnavailableException.class);
+    }
+
+    // ── describe: what the fallback's message says went wrong ──────────────────
+    // Every fallback used to say "unavailable (circuit open)" whatever the cause, which
+    // sent anyone reading a 503 after a refused connection or a timeout to look at the
+    // breaker. "circuit open" now means the breaker really rejected the call.
+
+    @Test
+    void onlyARealCallNotPermittedExceptionIsDescribedAsCircuitOpen() {
+        assertThat(FeignFallbacks.describe(openBreakerRejection())).isEqualTo("circuit open");
+        // the executor / time-limiter decorations can wrap it
+        assertThat(FeignFallbacks.describe(new ExecutionException(openBreakerRejection())))
+                .isEqualTo("circuit open");
+        // judged by type, never by message text
+        assertThat(FeignFallbacks.describe(new IllegalStateException("CircuitBreaker 'x' is OPEN")))
+                .isNotEqualTo("circuit open");
+    }
+
+    @Test
+    void aRefusedConnectionOrUnknownHostIsUnreachable() {
+        assertThat(FeignFallbacks.describe(retryable(new ConnectException("Connection refused"))))
+                .isEqualTo("unreachable");
+        assertThat(FeignFallbacks.describe(retryable(new UnknownHostException("knowledge-service"))))
+                .isEqualTo("unreachable");
+    }
+
+    @Test
+    void aReadTimeoutOrTheTimeLimitersTimeoutIsTimedOut() {
+        assertThat(FeignFallbacks.describe(retryable(new SocketTimeoutException("Read timed out"))))
+                .isEqualTo("timed out");
+        assertThat(FeignFallbacks.describe(new TimeoutException("TimeLimiter 'x' recorded a timeout exception")))
+                .isEqualTo("timed out");
+    }
+
+    @Test
+    void aServerErrorResponseIsDescribedByItsStatus() {
+        assertThat(FeignFallbacks.describe(
+                new FeignException.ServiceUnavailable("Unavailable", REQUEST, new byte[0], Map.of())))
+                .isEqualTo("HTTP 503");
+        assertThat(FeignFallbacks.describe(
+                new FeignException.InternalServerError("Boom", REQUEST, new byte[0], Map.of())))
+                .isEqualTo("HTTP 500");
+    }
+
+    @Test
+    void anythingElseIsNamedByTypeAndItsMessageNeverLeaks() {
+        // The description ends up in a ProblemDetail; driver messages can carry credentials.
+        String description = FeignFallbacks.describe(
+                new IllegalStateException("mongodb://admin:hunter2@mongo:27017 refused"));
+
+        assertThat(description).isEqualTo("IllegalStateException").doesNotContain("hunter2");
+        assertThat(FeignFallbacks.describe(retryable(new IOException("Connection reset"))))
+                .isEqualTo("I/O error");
+        assertThat(FeignFallbacks.describe(null)).isEqualTo("cause unknown");
+    }
+
+    @Test
+    void theUnavailableMessageNamesThePeerAndTheCause() {
+        assertThat(FeignFallbacks.unavailableMessage("ai-service", openBreakerRejection()))
+                .isEqualTo("ai-service unavailable (circuit open)");
+        assertThat(FeignFallbacks.unavailableMessage("ai-service", retryable(new ConnectException("refused"))))
+                .isEqualTo("ai-service unavailable (unreachable)");
+    }
+
+    private static CallNotPermittedException openBreakerRejection() {
+        CircuitBreaker breaker = CircuitBreaker.ofDefaults("peer");
+        breaker.transitionToOpenState();
+        return CallNotPermittedException.createCallNotPermittedException(breaker);
+    }
+
+    /** The shape Feign's errorExecuting() gives an I/O failure: status -1, the IOException as cause. */
+    private static RetryableException retryable(IOException cause) {
+        Long nonRetryable = null;
+        return new RetryableException(-1, cause.getMessage(), Request.HttpMethod.POST, cause, nonRetryable, REQUEST);
     }
 
     @Test

@@ -43,6 +43,6 @@ public class ChatClientFallbackFactory implements FallbackFactory<ChatClient> {
 
     private static RuntimeException failure(Throwable cause) {
         return FeignFallbacks.failure(cause,
-                () -> new ServiceUnavailableException("chat-service unavailable (circuit open)", cause));
+                () -> new ServiceUnavailableException(FeignFallbacks.unavailableMessage("chat-service", cause), cause));
     }
 }

@@ -10,7 +10,7 @@ import com.bloom.eventmanager.common.feign.FeignFallbacks;
  * Runs when storage-service is down or its breaker is open. Ingestion's work is driven
  * by a Kafka listener, so throwing here (rather than returning empty bytes) lets the
  * exception propagate to Spring Kafka's DefaultErrorHandler, which retries and
- * eventually routes the record to the .DLT topic. Empty bytes would be indexed as a
+ * eventually routes the record to the -dlt dead-letter topic. Empty bytes would be indexed as a
  * document with no content.
  *
  * <p>A {@code FallbackFactory} rather than a plain fallback because the invocation
@@ -35,6 +35,6 @@ public class StorageClientFallbackFactory implements FallbackFactory<StorageClie
 
     private static RuntimeException failure(Throwable cause) {
         return FeignFallbacks.failure(cause,
-                () -> new ExternalServiceException("storage-service unavailable (circuit open)", cause));
+                () -> new ExternalServiceException(FeignFallbacks.unavailableMessage("storage-service", cause), cause));
     }
 }

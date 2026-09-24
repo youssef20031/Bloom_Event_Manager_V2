@@ -36,5 +36,13 @@
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- Test only. FeignFallbacks.describe recognises an open breaker by class name so
+             that main code needs no Resilience4j; the test throws the real
+             CallNotPermittedException to prove that name is right. -->
+        <dependency>
+            <groupId>io.github.resilience4j</groupId>
+            <artifactId>resilience4j-circuitbreaker</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 </project>
