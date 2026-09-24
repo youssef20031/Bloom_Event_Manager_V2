@@ -48,6 +48,7 @@ public class DriveAuthManager {
     private final StorageProperties properties;
     private final CredentialsResolver resolver;
     private final TokenStore tokenStore;
+    private final OAuthStateStore states;
     private final NetHttpTransport transport = new NetHttpTransport();
     private final GsonFactory jsonFactory = GsonFactory.getDefaultInstance();
 
@@ -55,10 +56,12 @@ public class DriveAuthManager {
     private volatile Credential credential;
     private volatile boolean authenticated;
 
-    public DriveAuthManager(StorageProperties properties, CredentialsResolver resolver, TokenStore tokenStore) {
+    public DriveAuthManager(StorageProperties properties, CredentialsResolver resolver, TokenStore tokenStore,
+            OAuthStateStore states) {
         this.properties = properties;
         this.resolver = resolver;
         this.tokenStore = tokenStore;
+        this.states = states;
     }
 
     public void loadCredentials() {
@@ -93,6 +96,9 @@ public class DriveAuthManager {
                 AUTHORIZATION_SERVER_URL, client.clientId(), properties.redirectUri(), properties.scopes());
         url.setAccessType("offline");
         url.set("prompt", "consent");
+        // Google echoes this back to the callback unchanged. Without it the
+        // callback cannot tell our own consent flow from an attacker's.
+        url.setState(states.mint());
         return url.build();
     }
 

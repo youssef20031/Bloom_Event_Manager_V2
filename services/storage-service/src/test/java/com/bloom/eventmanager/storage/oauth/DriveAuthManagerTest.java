@@ -22,7 +22,8 @@ class DriveAuthManagerTest {
             600_000L);
     private final CredentialsResolver resolver = mock(CredentialsResolver.class);
     private final TokenStore tokenStore = mock(TokenStore.class);
-    private final DriveAuthManager auth = new DriveAuthManager(properties, resolver, tokenStore);
+    private final OAuthStateStore states = mock(OAuthStateStore.class);
+    private final DriveAuthManager auth = new DriveAuthManager(properties, resolver, tokenStore, states);
 
     @Test
     void isUnconfiguredWhenNoCredentialsCanBeResolved() {
@@ -64,6 +65,7 @@ class DriveAuthManagerTest {
     void buildsV1sConsentUrl() {
         when(resolver.resolve()).thenReturn(Optional.of(new OAuthClientCredentials("cid", "csecret")));
         when(tokenStore.load("default")).thenReturn(Optional.empty());
+        when(states.mint()).thenReturn("fixed-state-nonce");
         auth.loadCredentials();
 
         String url = auth.authUrl();
@@ -78,7 +80,8 @@ class DriveAuthManagerTest {
                 .contains("access_type=offline")
                 .contains("prompt=consent")
                 .contains("drive.readonly")
-                .contains("drive.file");
+                .contains("drive.file")
+                .contains("state=fixed-state-nonce");
     }
 
     @Test

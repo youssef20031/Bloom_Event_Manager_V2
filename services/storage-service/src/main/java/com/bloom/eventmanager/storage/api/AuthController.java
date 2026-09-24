@@ -18,6 +18,7 @@ import com.bloom.eventmanager.common.error.ErrorCode;
 import com.bloom.eventmanager.storage.config.StorageProperties;
 import com.bloom.eventmanager.storage.oauth.DriveAuthManager;
 import com.bloom.eventmanager.storage.oauth.DriveNotAuthenticatedException;
+import com.bloom.eventmanager.storage.oauth.OAuthStateStore;
 import com.bloom.eventmanager.storage.sync.AutoSyncScheduler;
 import com.bloom.eventmanager.storage.sync.DriveSyncService;
 
@@ -31,13 +32,15 @@ public class AuthController {
     private final AutoSyncScheduler scheduler;
     private final DriveSyncService sync;
     private final StorageProperties properties;
+    private final OAuthStateStore states;
 
     public AuthController(DriveAuthManager auth, AutoSyncScheduler scheduler, DriveSyncService sync,
-            StorageProperties properties) {
+            StorageProperties properties, OAuthStateStore states) {
         this.auth = auth;
         this.scheduler = scheduler;
         this.sync = sync;
         this.properties = properties;
+        this.states = states;
     }
 
     /**
@@ -65,9 +68,17 @@ public class AuthController {
     }
 
     @GetMapping("/callback")
-    public ResponseEntity<Void> callback(@RequestParam(name = "code", required = false) String code) {
+    public ResponseEntity<Void> callback(@RequestParam(name = "code", required = false) String code,
+            @RequestParam(name = "state", required = false) String state) {
         if (code == null || code.isBlank()) {
             throw new BloomException(ErrorCode.VALIDATION_FAILED, "Authorization code missing");
+        }
+        // Checked before the code is exchanged: an unredeemable state means this
+        // callback did not originate from a consent flow we started.
+        if (!states.consume(state)) {
+            log.warn("Rejected Google OAuth callback with a missing or unrecognised state parameter");
+            return ResponseEntity.status(HttpStatus.FOUND)
+                    .location(URI.create(properties.frontendUrl() + "/?auth=error")).build();
         }
         String target;
         try {
