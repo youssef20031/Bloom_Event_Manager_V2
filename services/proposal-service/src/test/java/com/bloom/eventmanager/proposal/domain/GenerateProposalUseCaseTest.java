@@ -4,8 +4,13 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.slf4j.LoggerFactory;
 import tools.jackson.databind.json.JsonMapper;
 
 import com.bloom.eventmanager.common.error.BloomException;
@@ -128,6 +133,30 @@ class GenerateProposalUseCaseTest {
         ArgumentCaptor<GenerateRequest> request = ArgumentCaptor.forClass(GenerateRequest.class);
         verify(ai).generate(request.capture());
         assertThat(request.getValue().input()).doesNotContain("EVENT ADVISOR CONVERSATIONS");
+    }
+
+    /** Tolerated, but not silently: without the throwable the warning gave no stack trace to go on. */
+    @Test
+    void aChatHistoryFailureIsLoggedWithItsStackTrace() {
+        stubHappyPath();
+        when(chat.sessionsMentioning("Acme Corp")).thenThrow(new RuntimeException("chat down"));
+        Logger logger = (Logger) LoggerFactory.getLogger(GenerateProposalUseCase.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            useCase.execute("Acme Corp");
+        }
+        finally {
+            logger.detachAppender(appender);
+        }
+
+        assertThat(appender.list).filteredOn(event -> event.getLevel() == Level.WARN).singleElement()
+                .satisfies(event -> {
+                    assertThat(event.getFormattedMessage()).contains("Could not retrieve chat history");
+                    assertThat(event.getThrowableProxy()).isNotNull();
+                    assertThat(event.getThrowableProxy().getMessage()).isEqualTo("chat down");
+                });
     }
 
     @Test
