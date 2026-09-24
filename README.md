@@ -189,6 +189,24 @@ rather than the shared `deploy/Dockerfile.service`, because Tess4J loads
 `libtesseract` from the system on Linux. Everything else builds from the shared
 one with a `MODULE_PATH` build arg.
 
+**Loading PDFs for the local ingest path.** `ingestion-service`'s `/data/pdfs`
+is the named volume `ingest-pdfs` (`bloom-v2_ingest-pdfs` under this project),
+not a host bind mount — nothing from the host is shared into the container, so
+no Docker file-sharing configuration is needed. It mounts `:ro`, so `docker cp`
+straight into it fails with `mounted volume is marked read-only`; load files
+through a short-lived helper that mounts the same volume read-write instead:
+
+```bash
+docker run -d --name bloom-pdf-loader -v bloom-v2_ingest-pdfs:/data/pdfs alpine sleep 300
+docker cp ./my-pdfs/. bloom-pdf-loader:/data/pdfs/
+docker rm -f bloom-pdf-loader
+curl -s -X POST http://localhost:8080/api/v1/rag/ingest -H "Authorization: Bearer $TOKEN"
+```
+
+Git Bash rewrites a leading `/` in docker args, so prefix the `docker run -v`
+line with `MSYS_NO_PATHCONV=1` there. Drive-sourced PDFs never touch this
+volume: ingestion downloads those from storage-service.
+
 ### Tests
 
 ```bash
@@ -422,7 +440,7 @@ Data stores and external services:
 | `GEMINI_EMBEDDING_MODEL` | `gemini-embedding-001` | ai-service — changing it changes every vector and every cache key |
 | `CACHE_KEY_PREFIX` | `bloom:` | ai-service |
 | `RAG_TOP_K` | `15` | retrieval-service, chat-service |
-| `PDF_DIRECTORY` | `./ISM_PDF` | ingestion-service's local ingest path. In Compose it names the **host** directory to mount (default `./pdfs`); the container always reads `/data/pdfs` |
+| `PDF_DIRECTORY` | `./ISM_PDF` | ingestion-service's local ingest path for IDE/host runs. In Compose the container always reads `/data/pdfs`, backed by the named volume `ingest-pdfs` — not this variable; see "Running it" for how to load files into it |
 | `CHUNK_SIZE` / `CHUNK_OVERLAP` | `1000` / `200` | ingestion-service |
 | `TESSDATA_PATH` | blank | ingestion-service; blank ⇒ the `eng.traineddata` bundled in the jar |
 | `GOOGLE_CLIENT_ID` | blank | storage-service. `GOOGLE_CLIENT_SECRET` sits beside it in `bloom.storage.*` but is config-repo `{cipher}` ciphertext, not an environment variable; see "Encrypted configuration" |
@@ -508,22 +526,52 @@ back, so a file that failed to ingest is picked up again on the next poll rather
 than being silently marked done. `POST /api/v1/rag/sync` runs the same diff on
 demand; `GET /api/v1/rag/sync/check` reports it without acting.
 
-## Known risks carried into Phase 6
+## Known risks after Phase 6
 
-- **The Drive OAuth callback checks no `state`.** `DriveAuthManager.authUrl()`
-  sets no `state` parameter, and storage-service's `AuthController` callback
-  accepts any `code`. The OAuth client id and the redirect URI are both public,
-  and both callback paths are anonymous by necessity, so an attacker can run
-  consent against their own Google account and hand the resulting `code` to the
-  callback — directly, or by luring an operator's browser to it. That binds the
-  attacker's Drive as the stack's single Drive identity and feeds its PDFs into
-  the corpus the Event Advisor answers from. Phase 6 Tasks 1–2 add a single-use
-  `state` nonce.
+- **Resolved in Phase 6 (Tasks 1–2): the Drive OAuth callback checked no
+  `state`.** `DriveAuthManager.authUrl()` used to set no `state` parameter, and
+  storage-service's `AuthController` callback accepted any `code`. The OAuth
+  client id and the redirect URI are both public, and both callback paths are
+  anonymous by necessity, so an attacker could run consent against their own
+  Google account and hand the resulting `code` to the callback — directly, or
+  by luring an operator's browser to it — binding the attacker's Drive as the
+  stack's single Drive identity and feeding its PDFs into the corpus the Event
+  Advisor answers from. `authUrl()` now mints a single-use `state` nonce,
+  recorded in Mongo (`oauthstates`) with a TTL index; the callback rejects any
+  `code` whose `state` does not match a live, unexpired, unredeemed nonce, and
+  does not exchange it or start the sync scheduler. Verified live in "Phase 6
+  verification" below.
 - **Eureka has no authentication.** `discovery-server` carries no Spring
   Security, so anything that can reach port 8761 can register an instance, and
   every peer that calls it sends `X-Internal-Token` plus the caller's JWT.
   Compose binds 8761 to `127.0.0.1`, which is the only mitigation. Phase 6 does
-  not change this.
+  not change this — see "What Phase 6 does not do".
+- **Config Server has no authentication.** `config-server` carries no Spring
+  Security either, so anything that can reach port 8888 gets every decrypted
+  value in `config-repo/` — `bloom.security.internal-token` and
+  `bloom.storage.google.client-secret` included — served as plaintext HTTP
+  responses. Compose binds 8888 to `127.0.0.1` and the Compose network, the
+  same mitigation as Eureka. Phase 6 does not change this — see "What Phase 6
+  does not do".
+
+### What Phase 6 does not do
+
+- No git backend for the Config Server — config is versioned with the code in
+  this repository and copied into the image. Move to a git remote when more
+  than one deployment needs to share config.
+- No per-user accounts — still one shared login, as V1 had.
+- No asymmetric config encryption (a keystore); the symmetric `ENCRYPT_KEY` is
+  enough for one deployment.
+- No authentication on the Config Server — it serves decrypted values to
+  anything that can reach it, which Compose limits to `127.0.0.1` and the
+  Compose network.
+- No automatic `/actuator/refresh` fan-out on a config edit — each client is
+  still refreshed deliberately, with an authenticated `POST /actuator/refresh`.
+- No authentication on Eureka — `discovery-server` still accepts anonymous
+  registrations, mitigated only by Compose binding 8761 to `127.0.0.1`; HTTP
+  Basic on the registry, with credentials in every client's `defaultZone`, is
+  the follow-up.
+- No Kubernetes; Compose remains the deployment target.
 
 ## Reference trace
 
@@ -640,6 +688,7 @@ Every place the build disagrees with the design spec or the phase plan, and why.
 | Spec §10.1: static assets "served by an nginx container behind the gateway" | nginx sits in front of the gateway: it serves the SPA on `:3000` and proxies `/api` and `/.well-known` to `api-gateway:8080` | The browser talks only to its own origin, so no CORS configuration is needed, and it never learns the gateway's address |
 | Phase 0 and Phase 5 plans: host ports published on every interface (`"7687:7687"`, `"8761:8761"`, …) | Every published port except `api-gateway` (8080) and `frontend` (3000) binds to `127.0.0.1` | They are admin and datastore ports, most with no authentication — Eureka accepts anonymous registrations. Loopback keeps the dashboards usable on this machine and takes them off the network |
 | Spec §9.3: breakers "on the two genuinely external boundaries", ai-service → Gemini and storage-service → Drive | Those two, plus one on every `@FeignClient` between services (Phase 5 plan, Task 6) | A peer that is down or slow would otherwise hold each caller's request thread for the full Feign timeout; with a breaker the caller fails fast and gets a clean `503` or its own retry path |
+| Spec §11: Config Server `native` backend listed against a git backend as the production alternative | Native backend kept: `config-repo/` is baked into the Config Server image at build time (`deploy/Dockerfile.service`, target `config-server`), and `docker compose … watch config-server` syncs live edits into the running container with no rebuild | One deployment: config is versioned with the code in the same commits, with no deploy credential and no boot-time network dependency to a second repository. Move to a git backend when several deployments need to share config |
 
 ## Phase verification log
 

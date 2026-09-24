@@ -277,7 +277,11 @@ services:
       <<: *service-env
       PDF_DIRECTORY: /data/pdfs
     volumes:
-      - ${PDF_DIRECTORY:-./pdfs}:/data/pdfs:ro
+      # A named volume, not a host path: nothing from the host is shared into
+      # the container, so no Docker file-sharing configuration is needed. Load
+      # PDFs into it with a short-lived helper container (see the README's
+      # "Running it"); ingestion-service only ever reads it.
+      - ingest-pdfs:/data/pdfs:ro
     depends_on: { api-gateway: { condition: service_healthy }, kafka: { condition: service_healthy } }
     mem_limit: 768m
     healthcheck:
@@ -362,3 +366,4 @@ volumes:
   mongo-data:
   redis-data:
   kafka-data:
+  ingest-pdfs:
