@@ -42,7 +42,7 @@ class DriveSyncServiceTest {
     private final EventPublisher publisher = mock(EventPublisher.class);
     private final DriveAuthManager auth = mock(DriveAuthManager.class);
     private final StorageProperties properties = new StorageProperties("", "", "", "http://cb", "root", 300_000L, 60_000L,
-            "http://localhost:5173", List.of(), "default");
+            "http://localhost:5173", List.of(), "default", 600_000L);
     private final DriveSyncService service = new DriveSyncService(drive, knowledge, publisher, auth, properties);
 
     @Test

@@ -28,5 +28,7 @@ public record StorageProperties(
         @DefaultValue("http://localhost:5173") String frontendUrl,
         @DefaultValue({ "https://www.googleapis.com/auth/drive.readonly",
                 "https://www.googleapis.com/auth/drive.file" }) List<String> scopes,
-        @DefaultValue("default") String accountId) {
+        @DefaultValue("default") String accountId,
+        /** Google OAuth {@code state} nonce lifetime: long enough to outlast a slow consent flow. */
+        @DefaultValue("600000") @Min(60_000) long stateTtlMs) {
 }
