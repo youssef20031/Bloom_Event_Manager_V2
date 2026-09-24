@@ -27,3 +27,16 @@ management:
     health:
       probes:
         enabled: true
+  # ── Tracing ──────────────────────────────────────────────────────────────
+  # This server does not import config-repo, so it cannot inherit the tracing
+  # settings every other service gets from config-repo/application.yml; they are
+  # repeated here. Without them it sampled at Boot's default 10% and posted to the
+  # built-in localhost:9411, which inside its container is its own empty loopback.
+  # Boot 4 key: the old management.zipkin.tracing.endpoint is deprecated at
+  # level=error and dropped silently.
+  tracing:
+    sampling:
+      probability: 1.0
+    export:
+      zipkin:
+        endpoint: ${ZIPKIN_ENDPOINT:http://localhost:9411/api/v2/spans}
