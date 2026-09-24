@@ -75,8 +75,18 @@ public class AuthController {
         }
         // Checked before the code is exchanged: an unredeemable state means this
         // callback did not originate from a consent flow we started.
-        if (!states.consume(state)) {
-            log.warn("Rejected Google OAuth callback with a missing or unrecognised state parameter");
+        boolean redeemed;
+        try {
+            redeemed = states.consume(state);
+        }
+        catch (RuntimeException ex) {
+            // Mongo unreachable: the state cannot be checked, so the code is not
+            // exchanged, and the browser tab lands back in the app, not on a 500.
+            log.error("Could not check the Google OAuth callback's state parameter", ex);
+            redeemed = false;
+        }
+        if (!redeemed) {
+            log.warn("Rejected Google OAuth callback with a missing, unrecognised or uncheckable state parameter");
             return ResponseEntity.status(HttpStatus.FOUND)
                     .location(URI.create(properties.frontendUrl() + "/?auth=error")).build();
         }
