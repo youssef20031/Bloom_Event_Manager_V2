@@ -22,7 +22,7 @@ name: bloom-v2
 # the login credentials are deliberately NOT in this block: the private key
 # lives only in the gateway, and every other service validates tokens against
 # the public JWKS it publishes (JWT_JWKS_URI). INTERNAL_SERVICE_TOKEN is gone
-# from here too (Task 4): config-repo/application.yml now carries
+# from here too (Phase 6): config-repo/application.yml now carries
 # bloom.security.internal-token as {cipher} ciphertext, which the Config
 # Server decrypts with ENCRYPT_KEY before any service ever sees the plaintext.
 x-service-env: &service-env
@@ -181,10 +181,13 @@ services:
       # profile still starts without infra, and an absent collector costs
       # dropped spans, not a failed boot.
       ZIPKIN_ENDPOINT: http://zipkin:9411/api/v2/spans
-      # The one secret still shared through the environment. ${VAR:?msg} fails
-      # `compose up` immediately with msg when ENCRYPT_KEY is unset, rather
-      # than starting a server that would serve every {cipher} value as
-      # invalid.<name> and let every dependent service fail later, less clearly.
+      # The one secret still shared through the environment. ${VAR:?msg} is
+      # checked whenever Compose interpolates this file, so with ENCRYPT_KEY
+      # unset EVERY command against it fails with msg -- ps, logs, config and
+      # down included, not only starting config-server -- rather than starting
+      # a server that would serve every {cipher} value as invalid.<name> and
+      # let every dependent service fail later, less clearly. (The server
+      # itself also refuses to start without it; see EncryptKeyGuard.)
       ENCRYPT_KEY: ${ENCRYPT_KEY:?set ENCRYPT_KEY in deploy/.env}
     # No volume: config-repo/ is baked into the image (deploy/Dockerfile.service,
     # target config-server). For live edits run
@@ -198,6 +201,9 @@ services:
         - action: sync
           path: ../config-repo
           target: /config-repo
+          # Also copy edits made before Watch started: without it, Watch syncs
+          # only changes it sees happen, and an edit made first never arrives.
+          initial_sync: true
     ports: ["127.0.0.1:8888:8888"]
     mem_limit: 512m
     healthcheck: &java-health
