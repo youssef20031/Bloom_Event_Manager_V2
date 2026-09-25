@@ -21,14 +21,16 @@ name: bloom-v2
 # application.yml actually read belongs here. The gateway's signing keys and
 # the login credentials are deliberately NOT in this block: the private key
 # lives only in the gateway, and every other service validates tokens against
-# the public JWKS it publishes (JWT_JWKS_URI).
+# the public JWKS it publishes (JWT_JWKS_URI). INTERNAL_SERVICE_TOKEN is gone
+# from here too (Phase 6): config-repo/application.yml now carries
+# bloom.security.internal-token as {cipher} ciphertext, which the Config
+# Server decrypts with ENCRYPT_KEY before any service ever sees the plaintext.
 x-service-env: &service-env
   CONFIG_SERVER_URL: http://config-server:8888
   EUREKA_URL: http://discovery-server:8761/eureka/
   KAFKA_BOOTSTRAP_SERVERS: kafka:9092
   ZIPKIN_ENDPOINT: http://zipkin:9411/api/v2/spans
   JWT_JWKS_URI: http://api-gateway:8080/.well-known/jwks.json
-  INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN}
 
 # Optional tuning below is passed only to the service that reads it, as
 # ${VAR:-<default>} with <default> copied exactly from that service's
@@ -172,16 +174,36 @@ services:
 
   # ── platform ────────────────────────────────────────────────────────────
   config-server:
-    build: { context: .., dockerfile: deploy/Dockerfile.service, args: { MODULE_PATH: infrastructure/config-server } }
+    build: { context: .., dockerfile: deploy/Dockerfile.service, target: config-server, args: { MODULE_PATH: infrastructure/config-server } }
     profiles: ["platform"]
     environment:
-      CONFIG_REPO: file:/config-repo
       # Best-effort span export: no depends_on on zipkin, so the platform
       # profile still starts without infra, and an absent collector costs
       # dropped spans, not a failed boot.
       ZIPKIN_ENDPOINT: http://zipkin:9411/api/v2/spans
-    volumes:
-      - ../config-repo:/config-repo:ro
+      # The one secret still shared through the environment. ${VAR:?msg} is
+      # checked whenever Compose interpolates this file, so with ENCRYPT_KEY
+      # unset EVERY command against it fails with msg -- ps, logs, config and
+      # down included, not only starting config-server -- rather than starting
+      # a server that would serve every {cipher} value as invalid.<name> and
+      # let every dependent service fail later, less clearly. (The server
+      # itself also refuses to start without it; see EncryptKeyGuard.)
+      ENCRYPT_KEY: ${ENCRYPT_KEY:?set ENCRYPT_KEY in deploy/.env}
+    # No volume: config-repo/ is baked into the image (deploy/Dockerfile.service,
+    # target config-server). For live edits run
+    #   docker compose -f deploy/docker-compose.yml --profile platform watch config-server
+    # (or `up --watch`): Compose copies each changed file into the running
+    # container through the Docker API, which needs no file sharing either, and
+    # the native backend re-reads its files on every request. Without Watch, an
+    # edit takes `up -d --build config-server`, which rebuilds only the last layer.
+    develop:
+      watch:
+        - action: sync
+          path: ../config-repo
+          target: /config-repo
+          # Also copy edits made before Watch started: without it, Watch syncs
+          # only changes it sees happen, and an edit made first never arrives.
+          initial_sync: true
     ports: ["127.0.0.1:8888:8888"]
     mem_limit: 512m
     healthcheck: &java-health
@@ -261,7 +283,11 @@ services:
       <<: *service-env
       PDF_DIRECTORY: /data/pdfs
     volumes:
-      - ${PDF_DIRECTORY:-./pdfs}:/data/pdfs:ro
+      # A named volume, not a host path: nothing from the host is shared into
+      # the container, so no Docker file-sharing configuration is needed. Load
+      # PDFs into it with a short-lived helper container (see the README's
+      # "Running it"); ingestion-service only ever reads it.
+      - ingest-pdfs:/data/pdfs:ro
     depends_on: { api-gateway: { condition: service_healthy }, kafka: { condition: service_healthy } }
     mem_limit: 768m
     healthcheck:
@@ -302,7 +328,6 @@ services:
       MONGO_URI: mongodb://mongodb:27017
       MONGO_TOKEN_DB: ${MONGO_TOKEN_DB:-tokendb}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
-      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
       GOOGLE_DRIVE_FOLDER_ID: ${GOOGLE_DRIVE_FOLDER_ID:-}
       GOOGLE_OAUTH_REDIRECT_URI: http://localhost:8080/api/rag/auth/google/callback
       FRONTEND_URL: http://localhost:3000
@@ -347,3 +372,4 @@ volumes:
   mongo-data:
   redis-data:
   kafka-data:
+  ingest-pdfs:

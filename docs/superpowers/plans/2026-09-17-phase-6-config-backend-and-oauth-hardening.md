@@ -1,16 +1,19 @@
-# Phase 6 — Config Server Git Backend and OAuth Hardening Implementation Plan
+# Phase 6 — Config Without Host Mounts, Encrypted Secrets, and OAuth Hardening Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Move the Config Server off its filesystem `native` backend onto a git backend with encrypted secrets, and close the OAuth CSRF hole that lets an attacker bind their own Google account as the fleet's Drive identity.
+> **Revised 2026-09-25.** The first draft moved the Config Server to a git backend in a separate repository. That was chosen for spec fidelity; weighed on its own merits for a single-machine, single-deployment project, it adds a second repository to keep in step with the code, a deploy credential, and a network dependency at boot, and buys nothing the goals need. Two of its stated benefits were also not git-specific: `{cipher}` decryption works for every Config Server backend (it wraps whichever repository is configured), and removing the bind mount only requires the config to reach the container some other way. Tasks 3 and 5 were rewritten accordingly; Tasks 1, 2 and 4 are unchanged in intent.
 
-**Architecture:** The Config Server keeps serving the same properties on the same port; only its backend changes, from `spring.profiles.active=native` reading `./config-repo` to a git repository read over HTTPS. That removes the Config Server's host bind-mount (Task 5 also moves ingestion-service's PDF mount to a named volume, the other one Compose needs), makes every config change versioned and reviewable, and — because git-backed config can carry `{cipher}` values — lets `INTERNAL_SERVICE_TOKEN` and the Google client secret live in config instead of in each deployment's environment. Separately, storage-service's Google OAuth flow gains a `state` nonce: `authUrl()` mints one, stores it, and the callback rejects any `code` that does not arrive with a matching, unexpired nonce.
+**Goal:** Remove every host bind mount from Compose, move the shared secrets out of the environment as `{cipher}` ciphertext, and close the OAuth CSRF hole that lets an attacker bind their own Google account as the fleet's Drive identity.
 
-**Tech Stack:** Spring Cloud Config Server 5.0.x (git backend, `spring-cloud-config-server`), Spring Cloud Config encryption (`{cipher}`, JCE unlimited-strength), Spring Boot 4.0.8, Java 25, MongoDB (nonce store, reusing storage-service's existing `tokendb`).
+**Architecture:** The Config Server keeps its `native` filesystem backend and keeps serving the same properties on the same port; only how the files reach it changes. Instead of a bind mount of `../config-repo`, the config-server image carries `config-repo/` at `/config-repo`, copied as its last layer so a config-only edit rebuilds in seconds. For live editing, Compose Watch's `sync` action copies each changed file into the running container through the Docker API — no bind mount, so no Docker Desktop file sharing — and the native backend re-reads its files on every request. Config stays versioned with the code, in the same commits and PRs. Ingestion-service's PDF mount becomes a named volume, so Compose needs no host path at all. Encryption: the Config Server decrypts `{cipher}` values before serving them, so `INTERNAL_SERVICE_TOKEN` and the Google client secret are committed as ciphertext and `ENCRYPT_KEY` is the only shared secret left in the environment. Separately, storage-service's Google OAuth flow gains a `state` nonce: `authUrl()` mints one, stores it, and the callback rejects any `code` that does not arrive with a matching, unexpired nonce.
 
-**Spec:** `docs/superpowers/specs/2026-08-30-bloom-spring-microservices-design.md` — section 11's deviation table records `Config Server native backend → Git backend | One less moving part to demo`. This phase pays that debt down. Section 9 covers the OAuth flow.
+**Tech Stack:** Spring Cloud Config Server 5.0.x (native backend, `{cipher}` symmetric encryption), Docker Compose v5 (multi-stage build targets, `develop.watch`), Spring Boot 4.0.8, Java 25, MongoDB (nonce store, reusing storage-service's existing `tokendb`).
+
+**Spec:** `docs/superpowers/specs/2026-08-30-bloom-spring-microservices-design.md` — section 11's deviation table records `Config Server native backend → Git backend | One less moving part to demo`. This phase keeps the deviation deliberately and records the new reason; section 9 covers the OAuth flow.
 
 **Prerequisite:** Phase 5 complete — `bloom-security` validating JWTs in every service, `config-repo/` holding the shared `application.yml` plus one file per service, and `deploy/docker-compose.yml` bind-mounting `../config-repo` into the Config Server.
+
 
 ## Global Constraints
 
@@ -26,20 +29,22 @@
 ## File Structure
 
 ```
-infrastructure/config-server/
-  src/main/resources/application.yml                 MODIFY: git backend, profile-gated
-  src/main/resources/application-native.yml           new: keeps the filesystem backend for offline work
-  src/test/java/.../GitBackendConfigurationTests.java  new
 services/storage-service/
   .../oauth/OAuthStateStore.java                       new: mint/consume single-use nonces
   .../mongo/OAuthStateDocument.java                    new
+  .../mongo/OAuthStateIndexInitializer.java            new: TTL index (auto-index-creation is off)
+  .../config/OAuthStateConfig.java                     new: builds OAuthStateStore from stateTtlMs
   .../oauth/DriveAuthManager.java                      MODIFY: authUrl() sets state
   .../api/AuthController.java                          MODIFY: callback requires state
   .../config/StorageProperties.java                    MODIFY: stateTtlMs
-  test: OAuthStateStoreTest, AuthControllerStateTest, DriveAuthManagerStateTest
-config-repo/                                           MOVED to its own git repository
-deploy/docker-compose.yml                              MODIFY: drop both host bind mounts (config-repo, PDFs), add git env
-README.md                                              MODIFY: git backend setup, encryption, deviations
+  test: OAuthStateStoreTest, OAuthStateIndexInitializerTest, AuthControllerStateTest, DriveAuthManagerTest
+deploy/Dockerfile.service                              MODIFY: named runtime stage + config-server target
+deploy/docker-compose.yml                              MODIFY: no host bind mounts; Compose Watch for config; secrets out of env
+infrastructure/config-server/src/main/resources/application.yml   MODIFY: encrypt.key; backend comment
+infrastructure/config-server/src/test/...              MODIFY: test key + a {cipher} round-trip test
+infrastructure/api-gateway/src/main/resources/application.yml     MODIFY: internal token from shared config
+config-repo/application.yml, config-repo/storage-service.yml      MODIFY: {cipher} values
+deploy/.env.example, README.md                         MODIFY
 ```
 
 ---
@@ -414,128 +419,108 @@ git commit -m "fix(storage): require a state nonce on the Google OAuth callback"
 
 ---
 
-### Task 3: Config Server git backend
+### Task 3: The Config Server image carries config-repo
 
 **Files:**
-- Modify: `infrastructure/config-server/src/main/resources/application.yml`
-- Create: `infrastructure/config-server/src/main/resources/application-native.yml`
-- Test: `infrastructure/config-server/src/test/java/com/bloom/eventmanager/config/GitBackendConfigurationTests.java`
+- Modify: `deploy/Dockerfile.service`
+- Modify: `deploy/docker-compose.yml` — the `config-server` service only
+- Modify: `infrastructure/config-server/src/main/resources/application.yml` — the backend comment only
+- Modify: `README.md` — the config-server row of the Architecture table, "Two things that look like misconfiguration and are not", and the `CONFIG_REPO` row of the environment-variable table
 
 **Interfaces:**
-- Produces: the Config Server serves the same `{application}/{profile}` documents as before. Backend is git by default (`CONFIG_GIT_URI`); the `native` Spring profile keeps the old filesystem behaviour for offline work.
+- Produces: the `config-server` image serves `config-repo/` from `/config-repo`, copied in at build time. Other services' images are byte-for-byte what they were: they build the Dockerfile's default (last) stage, which the new stage does not touch. Host runs are unchanged — started from the repository root, the Config Server still reads `file:./config-repo`.
+- Produces: while `docker compose … watch config-server` (or `up --watch`) runs, every save under `config-repo/` is copied into the running container and served on the next request.
 
-**Before starting:** create the git repository that will hold the config. Push the current `config-repo/` contents to it:
+- [ ] **Step 1: Give the Config Server its own build target**
 
-```bash
-cd config-repo
-git init && git add . && git commit -m "Initial config"
-git remote add origin <your config repo url>
-git push -u origin main
+In `deploy/Dockerfile.service`, name the runtime stage and add two stages after it. The existing runtime instructions do not change:
+
+```dockerfile
+FROM eclipse-temurin:25-jre AS runtime
+ARG MODULE_PATH
+# ...curl, JAVA_TOOL_OPTIONS, WORKDIR, COPY --from=build, ENTRYPOINT: unchanged...
+
+# The Config Server's image also carries the configuration it serves, so Compose
+# needs no bind mount -- which Docker Desktop only allows for drives shared in its
+# File Sharing settings. Deliberately the last layer: a config-only edit leaves
+# every layer above it, the Maven stage included, cached, so it rebuilds in
+# seconds. Selected in Compose with `target: config-server`.
+FROM runtime AS config-server
+COPY config-repo /config-repo
+ENV CONFIG_REPO=file:/config-repo
+
+# The default target is the last stage, so this must stay last: every other
+# service builds exactly the runtime image it built before.
+FROM runtime
 ```
 
-Keep `config-repo/` in this repository for now; Task 5 removes it once the git backend is proven.
+`config-repo/` is inside the build context (the repository root) and not excluded by `.dockerignore`. BuildKit builds only the stages the requested target depends on, so no other service's build touches `config-server`.
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 2: Build config-server from that target, with no volume**
 
-`GitBackendConfigurationTests.java`:
-
-```java
-package com.bloom.eventmanager.config;
-
-import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.cloud.config.server.environment.MultipleJGitEnvironmentRepository;
-
-import static org.assertj.core.api.Assertions.assertThat;
-
-/**
- * The backend is a deployment-shaped decision, so it is worth a test that fails
- * loudly if someone reverts to the filesystem by accident.
- */
-@SpringBootTest(properties = {
-        "spring.cloud.config.server.git.uri=https://example.invalid/bloom-config.git",
-        "spring.cloud.config.server.git.clone-on-start=false",
-        "eureka.client.enabled=false"
-})
-class GitBackendConfigurationTests {
-
-    @Autowired
-    private MultipleJGitEnvironmentRepository repository;
-
-    @Test
-    void defaultsToTheGitBackend() {
-        assertThat(repository).isNotNull();
-        assertThat(repository.getUri()).isEqualTo("https://example.invalid/bloom-config.git");
-    }
-}
-```
-
-- [ ] **Step 2: Run to verify failure**
-
-Run: `./mvnw -q -pl infrastructure/config-server test -Dtest=GitBackendConfigurationTests`
-Expected: FAIL — no `MultipleJGitEnvironmentRepository` bean, because `spring.profiles.active=native` pins the filesystem backend.
-
-- [ ] **Step 3: Implement**
-
-Replace `application.yml`'s `spring` block:
+In `deploy/docker-compose.yml`, the `config-server` service becomes:
 
 ```yaml
-spring:
-  application:
-    name: config-server
-  cloud:
-    config:
-      server:
-        git:
-          # Versioned, reviewable, and the same for every replica -- unlike the
-          # native backend, which needs a host path mounted into the container.
-          uri: ${CONFIG_GIT_URI}
-          default-label: ${CONFIG_GIT_BRANCH:main}
-          # Read-only deploy credentials. Never commit these.
-          username: ${CONFIG_GIT_USERNAME:}
-          password: ${CONFIG_GIT_PASSWORD:}
-          clone-on-start: true
-          timeout: 10
-          # The Config Server fetches from git at most every 30 s, so pushes are
-          # picked up without restarting it. A client still needs its own
-          # POST /actuator/refresh, authenticated with a JWT or X-Internal-Token.
-          refresh-rate: 30
+  config-server:
+    build: { context: .., dockerfile: deploy/Dockerfile.service, target: config-server, args: { MODULE_PATH: infrastructure/config-server } }
+    profiles: ["platform"]
+    environment:
+      # Best-effort span export: ...existing comment unchanged...
+      ZIPKIN_ENDPOINT: http://zipkin:9411/api/v2/spans
+    # No volume: config-repo/ is baked into the image (deploy/Dockerfile.service,
+    # target config-server). For live edits run
+    #   docker compose -f deploy/docker-compose.yml --profile platform watch config-server
+    # (or `up --watch`): Compose copies each changed file into the running
+    # container through the Docker API, which needs no file sharing either, and
+    # the native backend re-reads its files on every request. Without Watch, an
+    # edit takes `up -d --build config-server`, which rebuilds only the last layer.
+    develop:
+      watch:
+        - action: sync
+          path: ../config-repo
+          target: /config-repo
+    ports: ["127.0.0.1:8888:8888"]
+    mem_limit: 512m
+    # Unchanged. Keep the anchor: every other Java service merges *java-health.
+    healthcheck: &java-health
+      # ...unchanged...
 ```
 
-`application-native.yml` — the escape hatch for working offline:
+Remove the `CONFIG_REPO: file:/config-repo` environment entry (the image sets it) and the `volumes:` block.
 
-```yaml
-# Activated with SPRING_PROFILES_ACTIVE=native. Keeps Phase 5's filesystem
-# backend for working without network access to the config repository.
-spring:
-  cloud:
-    config:
-      server:
-        native:
-          search-locations: ${CONFIG_REPO:file:./config-repo}
-```
+- [ ] **Step 3: Update the backend comment**
 
-- [ ] **Step 4: Run to verify passing**
+In `infrastructure/config-server/src/main/resources/application.yml`, keep `spring.profiles.active: native` and `search-locations: ${CONFIG_REPO:file:./config-repo}` exactly, and replace the two comments so they say where the files come from: in Docker, the image's `/config-repo` (baked at build time, kept live by Compose Watch); from the IDE, `./config-repo` relative to the repository root.
+
+- [ ] **Step 4: Run the tests**
 
 Run: `./mvnw -q -pl infrastructure/config-server test`
-Expected: PASS. Existing config-server tests that relied on the native backend must set `spring.profiles.active=native` in their `@SpringBootTest(properties=…)`; they are testing the filesystem path deliberately, so that is correct rather than a workaround.
+Expected: PASS — no Java changed; `ConfigServerApplicationTests` already pins the native backend.
 
 - [ ] **Step 5: Verify live**
 
+A Phase 5 stack may already be running from a throwaway override (`deploy/docker-compose.yml` plus a scratchpad file that swaps the binds for named volumes). Recreate only config-server, from the real Compose file:
+
 ```bash
-CONFIG_GIT_URI=<your config repo url> ./mvnw -q -pl infrastructure/config-server spring-boot:run
-curl -s http://localhost:8888/application/default | head -40
-curl -s http://localhost:8888/storage-service/default | head -40
+docker compose -f deploy/docker-compose.yml --profile platform build config-server
+docker compose -f deploy/docker-compose.yml --profile platform up -d --no-deps config-server
+docker inspect bloom-v2-config-server-1 --format '{{json .Mounts}}'      # expect []
+curl -s http://localhost:8888/storage-service/default | head -c 600      # storage-service.yml's properties
 ```
 
-Expected: the same properties Phase 5 served from the filesystem, now with `"version"` holding the git commit SHA.
+Then prove the two edit paths:
+
+1. **Rebuild.** Add a harmless line to a config file (e.g. a comment in `config-repo/retrieval-service.yml`), time `docker compose … build config-server`, and record it — expected seconds, with every layer but the last cached. Revert the edit.
+2. **Watch.** Start `docker compose -f deploy/docker-compose.yml --profile platform watch --no-up config-server` in the background. Create `config-repo/watch-probe.yml` containing `bloom.watch-probe: synced`, and within a few seconds `curl -s http://localhost:8888/watch-probe/default` must contain `synced`. Delete the probe file (confirm it disappears from the container, or remove it with `docker exec` if Watch does not propagate deletes, and say which), then stop Watch.
+
+Expected: no mounts on the container, the same properties Phase 5 served, and both edit paths working on this machine, where E: is not in Docker Desktop's File Sharing list. If Watch cannot sync without file sharing, stop and report — it is the live-edit story this task depends on.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add infrastructure/config-server
-git commit -m "feat(config): git backend, with the native filesystem backend behind a profile"
+git add deploy/Dockerfile.service deploy/docker-compose.yml \
+        infrastructure/config-server/src/main/resources/application.yml README.md
+git commit -m "feat(config): the Config Server image carries config-repo, so Compose needs no config mount"
 ```
 
 ---
@@ -544,51 +529,96 @@ git commit -m "feat(config): git backend, with the native filesystem backend beh
 
 **Files:**
 - Modify: `infrastructure/config-server/src/main/resources/application.yml`
-- Modify: the config git repository's `application.yml` and `storage-service.yml`
-- Modify: `deploy/.env.example`, `README.md`
+- Modify: `infrastructure/config-server/src/test/java/com/bloom/eventmanager/config/ConfigServerApplicationTests.java`
+- Modify: `infrastructure/config-server/src/test/resources/test-config-repo/knowledge-service.yml`
+- Modify: `config-repo/application.yml`, `config-repo/storage-service.yml`
+- Modify: `infrastructure/api-gateway/src/main/resources/application.yml`
+- Modify: `deploy/docker-compose.yml`, `deploy/.env.example`, `README.md`
+- Local only, never committed: `deploy/.env` (gitignored) gains `ENCRYPT_KEY`
 
 **Interfaces:**
-- Produces: `POST /encrypt` and `POST /decrypt` on the Config Server; config values may be written as `'{cipher}<ciphertext>'` and are decrypted before being served.
+- Produces: `POST /encrypt` and `POST /decrypt` on the Config Server; config values may be written as `'{cipher}<ciphertext>'` and are decrypted before being served, whatever the backend.
+- Produces: `bloom.security.internal-token` and `bloom.storage.client-secret` arrive at clients as plaintext from the Config Server; neither `INTERNAL_SERVICE_TOKEN` nor `GOOGLE_CLIENT_SECRET` is passed to any container.
 
-A git-backed config repository is only an improvement if secrets stop travelling as plaintext environment variables. Spring Cloud Config's symmetric encryption lets `INTERNAL_SERVICE_TOKEN` and `GOOGLE_CLIENT_SECRET` be committed as ciphertext, leaving exactly one secret in the environment: `ENCRYPT_KEY`.
+Spring Cloud Config's symmetric encryption lets `INTERNAL_SERVICE_TOKEN` and `GOOGLE_CLIENT_SECRET` be committed as ciphertext, leaving exactly one shared secret in the environment: `ENCRYPT_KEY`. The committed ciphertext belongs to this deployment: a new deployment generates its own `ENCRYPT_KEY` and re-encrypts its own values.
 
-- [ ] **Step 1: Turn on encryption**
+**Handling real secrets.** Steps 3–5 read real values from `deploy/.env`. Never print, log, echo, or write a plaintext secret anywhere except `deploy/.env` — not to the terminal, a report, a commit, or a scratch file. Pipe values straight from `.env` into `curl`, and compare served values against `.env` by exit status or a match/mismatch line only. Ciphertext is safe to print and commit.
+
+- [ ] **Step 1: Write the failing test**
+
+In `ConfigServerApplicationTests`, add a test-only key to the `@SpringBootTest` properties under the environment variable's name — `"ENCRYPT_KEY=test-only-encrypt-key-not-a-secret"`, the same way the class already sets `ZIPKIN_ENDPOINT`, so the test passes only once `application.yml` maps `ENCRYPT_KEY` to `encrypt.key` — and a test:
+
+```java
+    /**
+     * {cipher} values are decrypted before they are served, for the native backend
+     * as for any other: clients never see ciphertext and never need the key.
+     */
+    @Test
+    void servesCipherValuesDecrypted() {
+        ResponseEntity<String> response = restTemplate.getForEntity(
+                "http://localhost:" + port + "/knowledge-service/default", String.class);
+
+        assertThat(response.getBody()).contains("decrypted-ok");
+        assertThat(response.getBody()).doesNotContain("{cipher}");
+    }
+```
+
+and in `test-config-repo/knowledge-service.yml` a value encrypted under that test key (produce it with Step 3's `/encrypt` call against a server started with the test key; it is a test fixture, not a secret):
+
+```yaml
+bloom:
+  config-server:
+    decrypted: '{cipher}<ciphertext of "decrypted-ok" under the test key>'
+```
+
+- [ ] **Step 2: Run to verify failure**
+
+Run: `./mvnw -q -pl infrastructure/config-server test -Dtest=ConfigServerApplicationTests`
+Expected: FAIL on `servesCipherValuesDecrypted` — `application.yml` does not yet map `ENCRYPT_KEY` to `encrypt.key`, so the server has no key, cannot decrypt the fixture, and never serves `decrypted-ok`.
+
+- [ ] **Step 3: Turn on encryption**
 
 Add to the Config Server's `application.yml`:
 
 ```yaml
 encrypt:
-  # The one secret that cannot live in the config repo. 32+ random bytes.
+  # The one secret that cannot live in config-repo. 32+ random bytes. Deliberately
+  # no default: without the key the server would serve every {cipher} value as
+  # invalid.<name>, and clients would fail later and more confusingly.
   key: ${ENCRYPT_KEY}
 ```
 
-Generate one and keep it out of the repository:
+The test supplies `ENCRYPT_KEY` itself, so the suite stays hermetic and still proves the mapping.
+
+Generate the real key into `deploy/.env` without printing it:
 
 ```bash
-openssl rand -base64 32
+printf '\nENCRYPT_KEY=%s\n' "$(openssl rand -base64 32)" >> deploy/.env
 ```
 
-- [ ] **Step 2: Verify the round trip**
+Round trip (`/encrypt` takes the raw body, so send `text/plain`, not a form):
 
 ```bash
-ENCRYPT_KEY=<generated> ./mvnw -q -pl infrastructure/config-server spring-boot:run
-curl -s -X POST --data-urlencode "test-value" http://localhost:8888/encrypt
-curl -s -X POST --data-urlencode "<the ciphertext>" http://localhost:8888/decrypt
+curl -s -X POST -H 'Content-Type: text/plain' --data-binary 'test-value' http://localhost:8888/encrypt
+curl -s -X POST -H 'Content-Type: text/plain' --data-binary '<the ciphertext>' http://localhost:8888/decrypt
 ```
 
-Expected: `/decrypt` returns `test-value`. If `/encrypt` returns `NOT_INSTALLED`, the JVM lacks unlimited-strength JCE — note it and stop; Java 25 should not have this problem.
+Expected: `/decrypt` returns `test-value`. If `/encrypt` returns `NO_KEY` or `NOT_INSTALLED`, stop and report.
 
-- [ ] **Step 3: Move the secrets**
+Run: `./mvnw -q -pl infrastructure/config-server test`
+Expected: PASS.
 
-In the config repository, replace the environment placeholders:
+- [ ] **Step 4: Move the secrets**
+
+With a Config Server running on the real `ENCRYPT_KEY`, encrypt `INTERNAL_SERVICE_TOKEN` and `GOOGLE_CLIENT_SECRET` from `deploy/.env` (piped, never printed), and replace the placeholders. `config-repo/application.yml`:
 
 ```yaml
 bloom:
   security:
-    internal-token: '{cipher}<ciphertext from /encrypt>'
+    internal-token: '{cipher}<ciphertext>'
 ```
 
-and in `storage-service.yml`:
+`config-repo/storage-service.yml`:
 
 ```yaml
 bloom:
@@ -596,74 +626,57 @@ bloom:
     client-secret: '{cipher}<ciphertext>'
 ```
 
-Leave `JWT_PRIVATE_KEY_PEM` and `JWT_PUBLIC_KEY_PEM` in the gateway's environment. The gateway reads them before it can talk to anything, and a signing key is worth keeping out of a config repository entirely.
+Single quotes are required: YAML would otherwise read `{cipher}…` as a flow mapping.
 
-- [ ] **Step 4: Verify the fleet still starts**
+The gateway does not read `bloom.security.internal-token`; its own `application.yml` binds `bloom.auth.internal-token: ${INTERNAL_SERVICE_TOKEN}`. Point it at the shared value it already receives from `config-repo/application.yml`, so the gateway and the services have one source:
 
-Start the Config Server with `ENCRYPT_KEY` set, then a service with `INTERNAL_SERVICE_TOKEN` **unset**.
+```yaml
+    internal-token: ${bloom.security.internal-token}
+```
 
-Expected: the service starts and authenticates peers normally, because the token now arrives decrypted from config. If it fails `@NotBlank` binding, the cipher value is not being decrypted — check that the value is single-quoted in YAML.
+In `deploy/docker-compose.yml`: remove `INTERNAL_SERVICE_TOKEN` from the `x-service-env` anchor and `GOOGLE_CLIENT_SECRET` from storage-service's environment; give config-server `ENCRYPT_KEY: ${ENCRYPT_KEY:?set ENCRYPT_KEY in deploy/.env}` so a missing key fails `compose up` immediately. Update the anchor's comment. In `deploy/.env.example`: remove `INTERNAL_SERVICE_TOKEN` and `GOOGLE_CLIENT_SECRET`, add `ENCRYPT_KEY=` with a one-line comment on generating it. Leave `JWT_PRIVATE_KEY_PEM` and `JWT_PUBLIC_KEY_PEM` in the gateway's environment: the gateway reads them before it can talk to anything, and a signing key is worth keeping out of config entirely. `NEO4J_PASSWORD` stays too — the neo4j container itself needs it from the environment.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Verify decryption live**
+
+Recreate config-server with the real key and check what it serves — by match/mismatch only:
 
 ```bash
-git add infrastructure/config-server/src/main/resources/application.yml deploy/.env.example README.md
+docker compose -f deploy/docker-compose.yml --profile platform up -d --build --no-deps config-server
+# served internal token == .env's INTERNAL_SERVICE_TOKEN ? print "match"/"MISMATCH", never the value
+# same for storage-service's bloom.storage.client-secret vs .env's GOOGLE_CLIENT_SECRET
+# and: no "{cipher}" and no "invalid." key anywhere in /application/default or /storage-service/default
+```
+
+The whole fleet starting and authenticating peers with neither variable in its environment is proven by Task 5's full-stack bring-up.
+
+- [ ] **Step 6: Document**
+
+README: an "Encrypted configuration" subsection under "Login and security" — what `ENCRYPT_KEY` is, how to encrypt a new value (`/encrypt` with `text/plain`), single-quoting, that the committed ciphertext is this deployment's, and that the Config Server serves **decrypted** values to any caller that can reach it: port 8888 is bound to `127.0.0.1` and otherwise reachable only on the Compose network, the same trust boundary as the anonymous Eureka registry. Update the environment-variable table (`ENCRYPT_KEY` added; `INTERNAL_SERVICE_TOKEN` and `GOOGLE_CLIENT_SECRET` now config-repo ciphertext) and the dev run mode (the Config Server needs `ENCRYPT_KEY`; services no longer need `INTERNAL_SERVICE_TOKEN`).
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add infrastructure/config-server/src/main/resources/application.yml \
+        infrastructure/config-server/src/test/java/com/bloom/eventmanager/config/ConfigServerApplicationTests.java \
+        infrastructure/config-server/src/test/resources/test-config-repo/knowledge-service.yml \
+        infrastructure/api-gateway/src/main/resources/application.yml \
+        config-repo/application.yml config-repo/storage-service.yml \
+        deploy/docker-compose.yml deploy/.env.example README.md
 git commit -m "feat(config): encrypt shared secrets with {cipher}, leaving only ENCRYPT_KEY in the environment"
 ```
 
 ---
 
-### Task 5: Compose without the bind mount
+### Task 5: Compose without any host mount
 
 **Files:**
-- Modify: `deploy/docker-compose.yml`
+- Modify: `deploy/docker-compose.yml` — ingestion-service's PDF volume
 - Modify: `deploy/.env.example`
-- Delete: `config-repo/` (after Task 3 proves the git backend serves the same values)
 - Modify: `README.md`
 
-This is the payoff for the whole phase: Compose stops needing any host path, which is what blocked Phase 5's full-stack Compose verification on a machine whose Docker file sharing did not include the drive. There are two to remove, not one: the Config Server's `../config-repo` mount, and ingestion-service's `${PDF_DIRECTORY:-./pdfs}:/data/pdfs:ro`. Removing only the first leaves Compose needing file sharing, and the exit criterion below still fails.
+This is the payoff for the whole phase: Compose stops needing any host path, which is what blocked Phase 5's full-stack Compose verification on a machine whose Docker file sharing did not include the drive. Task 3 removed the Config Server's `../config-repo` mount; the other is ingestion-service's `${PDF_DIRECTORY:-./pdfs}:/data/pdfs:ro`. Removing only the first leaves Compose needing file sharing, and the exit criterion below still fails.
 
-- [ ] **Step 1: Replace the mount with git configuration**
-
-In `deploy/docker-compose.yml`, the `config-server` service:
-
-```yaml
-  config-server:
-    build: { context: .., dockerfile: deploy/Dockerfile.service, args: { MODULE_PATH: infrastructure/config-server } }
-    profiles: ["platform"]
-    environment:
-      # No bind mount: the backend is a git repository, so nothing from the host
-      # needs to be shared into the container.
-      CONFIG_GIT_URI: ${CONFIG_GIT_URI}
-      CONFIG_GIT_BRANCH: ${CONFIG_GIT_BRANCH:-main}
-      CONFIG_GIT_USERNAME: ${CONFIG_GIT_USERNAME:-}
-      CONFIG_GIT_PASSWORD: ${CONFIG_GIT_PASSWORD:-}
-      ENCRYPT_KEY: ${ENCRYPT_KEY}
-      ZIPKIN_ENDPOINT: http://zipkin:9411/api/v2/spans
-    ports: ["127.0.0.1:8888:8888"]
-    mem_limit: 512m
-    # Unchanged. Keep the anchor: every other Java service merges *java-health.
-    healthcheck: &java-health
-      test: ["CMD", "curl", "-fsS", "http://localhost:8888/actuator/health/readiness"]
-      interval: 10s
-      timeout: 3s
-      retries: 12
-      start_period: 40s
-```
-
-Remove the `volumes:` block entirely.
-
-Extend `deploy/.env.example`:
-
-```
-CONFIG_GIT_URI=https://github.com/<org>/bloom-config.git
-CONFIG_GIT_BRANCH=main
-CONFIG_GIT_USERNAME=
-CONFIG_GIT_PASSWORD=
-ENCRYPT_KEY=
-```
-
-- [ ] **Step 2: Replace ingestion-service's PDF bind mount with a named volume**
+- [ ] **Step 1: Replace ingestion-service's PDF bind mount with a named volume**
 
 `ingestion-service` reads the PDFs for the local ingest path (`POST /api/v1/rag/ingest`) from `/data/pdfs`. Keep that container path and the `:ro` flag; change only the source, from a host directory to a named volume:
 
@@ -695,9 +708,11 @@ docker rm -f bloom-pdf-loader
 curl -s -X POST http://localhost:8080/api/v1/rag/ingest -H "Authorization: Bearer $TOKEN"
 ```
 
-`bloom-v2_ingest-pdfs` is Compose's `<project>_<volume>` name for the project `bloom-v2`. Drive-sourced PDFs never touch this volume: ingestion downloads those from storage-service. Document the loading commands in the README under "Running it".
+`bloom-v2_ingest-pdfs` is Compose's `<project>_<volume>` name for the project `bloom-v2`. Drive-sourced PDFs never touch this volume: ingestion downloads those from storage-service. Document the loading commands in the README under "Running it". (Git Bash needs `MSYS_NO_PATHCONV=1` in front of `docker run -v name:/path`.)
 
-- [ ] **Step 3: Verify the full stack**
+- [ ] **Step 2: Verify the full stack**
+
+Bring the whole stack up from `deploy/docker-compose.yml` alone — no override file:
 
 ```bash
 docker compose -f deploy/docker-compose.yml --profile infra --profile platform --profile apps up -d --build
@@ -705,18 +720,17 @@ docker compose -f deploy/docker-compose.yml --profile infra --profile platform -
 docker compose -f deploy/docker-compose.yml --profile infra --profile platform --profile apps config | grep -c "type: bind"
 ```
 
-Expected: all sixteen containers healthy within ~3 minutes — `frontend` included, since it now declares a healthcheck — with no Docker Desktop file-sharing configuration required, and `0` host binds. This is the Phase 5 exit criterion that could not be demonstrated.
+Expected: all sixteen containers healthy within ~3 minutes — `frontend` included — with no Docker Desktop file-sharing configuration, and `0` host binds. Also confirm: no container's environment carries `INTERNAL_SERVICE_TOKEN` or `GOOGLE_CLIENT_SECRET` (`docker inspect … --format '{{range .Config.Env}}{{println .}}{{end}}' | grep -c` per container, printing counts only); login through the gateway succeeds; a query that fans out across services (e.g. `/api/v1/rag/retrieve`) answers 200, which proves the internal token decrypted from config authenticates peer calls; and a PDF copied in with Step 1's loader is visible at `/data/pdfs` inside ingestion-service.
 
-- [ ] **Step 4: Remove the filesystem config**
+- [ ] **Step 3: Record the deviation and retire the Phase 5 risk**
 
-Once the stack is healthy on the git backend, delete `config-repo/` from this repository — leaving it invites edits that silently do nothing, since the Config Server no longer reads it. The `native` profile from Task 3 still works against an external checkout via `CONFIG_REPO`.
+README: in the spec deviations log, reword the Config Server row — native backend kept, config baked into the image with Compose Watch for live edits; reason: one deployment, config versioned with the code in the same commits, no deploy credential or boot-time network dependency; move to a git backend when several deployments share config. Close out "Known risks carried into Phase 6" for the items this phase resolved, and add the Phase 6 "does not do" follow-ups (Config Server and Eureka unauthenticated inside the Compose network).
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
 git add deploy/docker-compose.yml deploy/.env.example README.md
-git rm -r config-repo
-git commit -m "chore(deploy): Config Server reads git and PDFs live in a volume, so Compose needs no host mount"
+git commit -m "chore(deploy): PDFs live in a named volume, so Compose needs no host mount"
 ```
 
 ---
@@ -725,17 +739,19 @@ git commit -m "chore(deploy): Config Server reads git and PDFs live in a volume,
 
 - [ ] The Google OAuth callback rejects any `code` that arrives without a matching, unexpired, single-use `state`, and does not exchange it or start the sync scheduler
 - [ ] A nonce can be redeemed exactly once, and expires on its own via a Mongo TTL index
-- [ ] The Config Server serves every property from a git repository, with the commit SHA visible as the document `version`
-- [ ] `SPRING_PROFILES_ACTIVE=native` still serves from a filesystem checkout, for offline work
-- [ ] `INTERNAL_SERVICE_TOKEN` and `GOOGLE_CLIENT_SECRET` are `{cipher}` ciphertext in the config repository; `ENCRYPT_KEY` is the only shared secret left in the environment
+- [ ] The config-server image carries `config-repo/` and serves it with no mount; `docker compose … watch config-server` syncs an edit into the running container, served on the next request, on a machine whose drive is not in Docker Desktop's File Sharing
+- [ ] Host runs still serve `./config-repo` from the repository root
+- [ ] `INTERNAL_SERVICE_TOKEN` and `GOOGLE_CLIENT_SECRET` are `{cipher}` ciphertext in `config-repo/`, and no container receives either in its environment; `ENCRYPT_KEY` is the only shared secret left in the environment
 - [ ] `docker compose --profile infra --profile platform --profile apps up -d --build` brings up all sixteen containers healthy, `frontend` included, **with no Docker file-sharing configuration** — neither the config-repo mount nor the PDF mount remains
 - [ ] `./mvnw clean install` passes with no skipped tests
-- [ ] No plaintext secret anywhere in either repository
+- [ ] No plaintext secret anywhere in the repository
 
 ## What Phase 6 Does Not Do
 
+- No git backend for the Config Server — config is versioned with the code in this repository and copied into the image. Move to a git remote when more than one deployment needs to share config
 - No per-user accounts — still one shared login, as V1 had
 - No asymmetric config encryption (a keystore); the symmetric `ENCRYPT_KEY` is enough for one deployment
-- No automatic `/actuator/refresh` fan-out on a config push — each client is still refreshed deliberately, with an authenticated `POST /actuator/refresh`
+- No authentication on the Config Server — it serves decrypted values to anything that can reach it, which Compose limits to `127.0.0.1` and the Compose network
+- No automatic `/actuator/refresh` fan-out on a config edit — each client is still refreshed deliberately, with an authenticated `POST /actuator/refresh`
 - No authentication on Eureka — `discovery-server` still accepts anonymous registrations, mitigated only by Compose binding 8761 to `127.0.0.1`; HTTP Basic on the registry, with credentials in every client's `defaultZone`, is the follow-up
 - No Kubernetes; Compose remains the deployment target

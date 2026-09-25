@@ -8,6 +8,7 @@ import feign.FeignException;
 import feign.Request;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.dao.DataAccessResourceFailureException;
 
 import com.bloom.eventmanager.common.error.BloomException;
 import com.bloom.eventmanager.events.BloomTopics;
@@ -42,7 +43,7 @@ class DriveSyncServiceTest {
     private final EventPublisher publisher = mock(EventPublisher.class);
     private final DriveAuthManager auth = mock(DriveAuthManager.class);
     private final StorageProperties properties = new StorageProperties("", "", "", "http://cb", "root", 300_000L, 60_000L,
-            "http://localhost:5173", List.of(), "default");
+            "http://localhost:5173", List.of(), "default", 600_000L);
     private final DriveSyncService service = new DriveSyncService(drive, knowledge, publisher, auth, properties);
 
     @Test
@@ -156,6 +157,33 @@ class DriveSyncServiceTest {
         service.stateForTesting().start();
 
         assertThatThrownBy(service::syncAll).isInstanceOf(BloomException.class).hasMessageContaining("already in progress");
+    }
+
+    @Test
+    void statusCarriesAFreshAuthUrlWhenDriveIsConfiguredButNotConnected() {
+        when(auth.isAuthenticated()).thenReturn(false);
+        when(auth.isConfigured()).thenReturn(true);
+        when(auth.authUrl()).thenReturn("https://accounts.google.com/o/oauth2/v2/auth?state=s");
+
+        assertThat(service.status().authUrl()).isEqualTo("https://accounts.google.com/o/oauth2/v2/auth?state=s");
+    }
+
+    /**
+     * authUrl() mints a state nonce in Mongo on every status poll. With Mongo down that
+     * must not turn the status poll into an error: the SPA falls back to fetching an
+     * authUrl itself when the status carries none.
+     */
+    @Test
+    void statusStillAnswersWithoutAnAuthUrlWhenTheStateCannotBeMinted() {
+        when(auth.isAuthenticated()).thenReturn(false);
+        when(auth.isConfigured()).thenReturn(true);
+        when(auth.authUrl()).thenThrow(new DataAccessResourceFailureException("Timed out waiting for a server"));
+
+        DriveSyncService.SyncStatus status = service.status();
+
+        assertThat(status.status()).isEqualTo("idle");
+        assertThat(status.isAuthenticated()).isFalse();
+        assertThat(status.authUrl()).isNull();
     }
 
     private static StorageFile file(String id, String name, String modifiedTime) {

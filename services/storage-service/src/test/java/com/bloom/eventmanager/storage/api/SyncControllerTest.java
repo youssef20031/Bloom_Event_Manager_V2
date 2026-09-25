@@ -15,6 +15,7 @@ import com.bloom.eventmanager.storage.config.StorageProperties;
 import com.bloom.eventmanager.storage.drive.StorageFile;
 import com.bloom.eventmanager.storage.oauth.DriveAuthManager;
 import com.bloom.eventmanager.storage.oauth.DriveNotAuthenticatedException;
+import com.bloom.eventmanager.storage.oauth.OAuthStateStore;
 import com.bloom.eventmanager.storage.sync.AutoSyncScheduler;
 import com.bloom.eventmanager.storage.sync.ChangeSet;
 import com.bloom.eventmanager.storage.sync.DriveSyncService;
@@ -43,6 +44,9 @@ class SyncControllerTest {
 
     @MockitoBean
     private DriveAuthManager auth;
+
+    @MockitoBean
+    private OAuthStateStore states;
 
     @Test
     void statusHasV1sShapeIncludingAuthUrlWhenUnauthenticated() throws Exception {
@@ -133,7 +137,9 @@ class SyncControllerTest {
 
     @Test
     void callbackAuthenticatesStartsAutoSyncAndRedirectsToTheFrontend() throws Exception {
-        mockMvc.perform(get("/api/v1/storage/auth/callback").param("code", "abc"))
+        when(states.consume("good-state")).thenReturn(true);
+
+        mockMvc.perform(get("/api/v1/storage/auth/callback").param("code", "abc").param("state", "good-state"))
                 .andExpect(status().isFound())
                 .andExpect(header().string("Location", "http://localhost:5173/?auth=success"));
 

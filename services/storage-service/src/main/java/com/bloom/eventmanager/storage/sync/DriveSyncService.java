@@ -9,6 +9,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import feign.FeignException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
 
 import com.bloom.eventmanager.common.error.BloomException;
@@ -155,7 +156,15 @@ public class DriveSyncService {
         boolean authenticated = auth.isAuthenticated();
         String authUrl = null;
         if (!authenticated && auth.isConfigured()) {
-            authUrl = auth.authUrl();
+            // authUrl() mints a state nonce in Mongo. Without Mongo the status
+            // still answers, just with no authUrl; the SPA then fetches one
+            // from /sync/auth when the user clicks Connect.
+            try {
+                authUrl = auth.authUrl();
+            }
+            catch (DataAccessException ex) {
+                log.warn("Could not mint an OAuth state for the status authUrl; answering without one: {}", ex.getMessage());
+            }
         }
         return new SyncStatus(state.status(), authenticated, state.lastSyncTime(), state.lastResult(), authUrl);
     }

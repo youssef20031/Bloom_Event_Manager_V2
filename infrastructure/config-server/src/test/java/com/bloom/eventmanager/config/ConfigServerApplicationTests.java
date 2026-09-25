@@ -18,7 +18,9 @@ import static org.assertj.core.api.Assertions.assertThat;
                 "spring.profiles.active=native",
                 "spring.cloud.config.server.native.search-locations=classpath:/test-config-repo",
                 // distinct from the built-in default, so the assertion proves it is read
-                "ZIPKIN_ENDPOINT=http://127.0.0.1:9411/api/v2/spans"
+                "ZIPKIN_ENDPOINT=http://127.0.0.1:9411/api/v2/spans",
+                // a test-only key, never a real secret; proves application.yml maps it to encrypt.key
+                "ENCRYPT_KEY=test-only-encrypt-key-not-a-secret"
         })
 @AutoConfigureTestRestTemplate
 class ConfigServerApplicationTests {
@@ -56,6 +58,19 @@ class ConfigServerApplicationTests {
     void tracesEverythingToTheZipkinEndpointFromTheEnvironment() {
         assertThat(zipkin.getEndpoint()).isEqualTo("http://127.0.0.1:9411/api/v2/spans");
         assertThat(tracing.getSampling().getProbability()).isEqualTo(1.0f);
+    }
+
+    /**
+     * {cipher} values are decrypted before they are served, for the native backend
+     * as for any other: clients never see ciphertext and never need the key.
+     */
+    @Test
+    void servesCipherValuesDecrypted() {
+        ResponseEntity<String> response = restTemplate.getForEntity(
+                "http://localhost:" + port + "/knowledge-service/default", String.class);
+
+        assertThat(response.getBody()).contains("decrypted-ok");
+        assertThat(response.getBody()).doesNotContain("{cipher}");
     }
 
     @Test

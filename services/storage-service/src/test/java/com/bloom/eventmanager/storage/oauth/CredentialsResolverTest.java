@@ -61,6 +61,6 @@ class CredentialsResolverTest {
     private static StorageProperties props(String id, String secret, Path credentialsPath) {
         return new StorageProperties(id, secret, credentialsPath.toString(),
                 "http://localhost:8080/api/rag/auth/google/callback", "root", 300_000L, 60_000L,
-                "http://localhost:5173", List.of("https://www.googleapis.com/auth/drive.file"), "default");
+                "http://localhost:5173", List.of("https://www.googleapis.com/auth/drive.file"), "default", 600_000L);
     }
 }
