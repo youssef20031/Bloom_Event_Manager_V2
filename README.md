@@ -125,6 +125,95 @@ cp deploy/.env.example deploy/.env
 `deploy/.env` is gitignored and `deploy/.env.example` holds placeholders only.
 On Windows use `mvnw.cmd` wherever `./mvnw` appears below.
 
+On a machine that has never run this stack, work through "First run on a new
+machine" once before either mode below. The `{cipher}` values committed in
+`config-repo/` decrypt only under the `ENCRYPT_KEY` they were encrypted with,
+and a new machine generates a different one. Coming from a Phase 5 checkout,
+see "Upgrading from Phase 5".
+
+### First run on a new machine
+
+Until the Config Server can decrypt `bloom.security.internal-token`, every
+service fails at startup with a `BindValidationException` on it. A fresh clone
+therefore generates its own key and re-encrypts the two committed secrets with
+it:
+
+1. **Generate the key.** Put the output of `openssl rand -base64 32` on the
+   `ENCRYPT_KEY=` line of `deploy/.env`. Do this first: until it is set, every
+   `docker compose` command against `deploy/docker-compose.yml` fails with
+   `required variable ENCRYPT_KEY is missing a value`.
+2. **Start the Config Server on its own.**
+
+   ```bash
+   docker compose -f deploy/docker-compose.yml --profile platform up -d --build config-server
+   curl -s http://localhost:8888/actuator/health   # {"groups":["liveness","readiness"],"status":"UP"} once it is ready
+   ```
+
+3. **Encrypt the two secrets.** Generate and encrypt the service-to-service
+   token in one pipe. Nobody ever needs its plaintext, because every service
+   receives it from the Config Server already decrypted, so it never reaches
+   the screen, a file or shell history. `tr` strips the line ending, `\r`
+   included: Git for Windows' `openssl` ends its output with CRLF, and either
+   character would otherwise be encrypted as part of the token:
+
+   ```bash
+   openssl rand -base64 32 | tr -d '\r\n' \
+     | curl -s -X POST -H 'Content-Type: text/plain' --data-binary @- http://localhost:8888/encrypt
+   ```
+
+   Then encrypt the Google OAuth client secret (Cloud Console → APIs & Services
+   → Credentials → the OAuth client), typed at a silent prompt:
+
+   ```bash
+   read -rs SECRET && printf '%s' "$SECRET" \
+     | curl -s -X POST -H 'Content-Type: text/plain' --data-binary @- http://localhost:8888/encrypt; unset SECRET
+   ```
+
+   You can skip the Google secret. Drive then stays unconfigured, and nothing
+   else depends on it.
+4. **Replace the committed ciphertext.** Paste each output over the value
+   after `{cipher}`, keeping the single quotes:
+   `bloom.security.internal-token` in `config-repo/application.yml`, and
+   `bloom.storage.client-secret` in `config-repo/storage-service.yml` (or `''`
+   if you skipped the Google secret). These values now belong to your
+   deployment. Commit them to your own branch or keep them as local changes.
+5. **Rebuild and start everything.**
+
+   ```bash
+   docker compose -f deploy/docker-compose.yml --profile infra --profile platform --profile apps up -d --build
+   ```
+
+   `--build` is what carries the new ciphertext into the Config Server:
+   `config-repo/` is baked into its image, and only that last layer rebuilds.
+   For the Dev mode below, use `--profile infra --profile platform` in this
+   step instead.
+
+### Upgrading from Phase 5
+
+Phase 6 moved the shared secrets into `config-repo/` as ciphertext and the
+local PDFs into a named volume. On a checkout that last ran Phase 5:
+
+1. **Add `ENCRYPT_KEY` to `deploy/.env` before running any Compose command**,
+   `ps` and `down` included. `${ENCRYPT_KEY:?}` in `deploy/docker-compose.yml`
+   makes every command against the file fail until it is set. Unless you have
+   the key this repository's ciphertext was encrypted with, that means "First
+   run on a new machine", steps 1–5. Step 3 can encrypt the
+   `GOOGLE_CLIENT_SECRET` already in `deploy/.env` instead of the prompt, by
+   replacing `read -rs SECRET && printf '%s' "$SECRET"` with
+   `grep '^GOOGLE_CLIENT_SECRET=' deploy/.env | cut -d= -f2- | tr -d '\r\n'`.
+   A fresh internal token is fine: every service picks up the new one from the
+   Config Server when it restarts.
+2. **Load the old PDFs into the named volume.** Phase 5 bind-mounted the
+   directory `PDF_DIRECTORY` named in `deploy/.env`, resolved relative to
+   `deploy/` (`deploy/pdfs` when unset), at `/data/pdfs`. Phase 6 reads the
+   named volume `bloom-v2_ingest-pdfs` instead, which starts empty. Copy the
+   directory in with the helper container under "Full — everything in
+   Docker", e.g. `docker cp deploy/pdfs/. bloom-pdf-loader:/data/pdfs/`.
+3. **Remove the old secret lines.** `INTERNAL_SERVICE_TOKEN` and
+   `GOOGLE_CLIENT_SECRET` in `deploy/.env` are no longer read by anything.
+   Delete them once their ciphertext is in `config-repo/` and the stack is up
+   on it. The Google secret stays recoverable from the Cloud Console.
+
 ### Dev — infrastructure and platform in Docker, services from the IDE
 
 ```bash
@@ -146,10 +235,12 @@ Start the Config Server before any service. Each service's `application.yml`
 imports `optional:configserver:…`, but `bloom.security.internal-token` is set
 only in `config-repo/application.yml`, so a service started without the Config
 Server fails at startup with a `BindValidationException` on that property. The
-Config Server itself needs `ENCRYPT_KEY` to decrypt it: `docker compose
---profile platform up` reads it from `deploy/.env` and refuses to start
-config-server without it; a host run needs it in that run configuration's own
-environment instead.
+Config Server itself needs `ENCRYPT_KEY` to decrypt it, and refuses to start
+without it. Compose reads it from `deploy/.env`, and while it is unset every
+`docker compose` command against `deploy/docker-compose.yml` fails, not only
+starting config-server. A host run needs it in that run configuration's own
+environment, and it must be the same key as in `deploy/.env`: the committed
+ciphertext decrypts only under the key it was encrypted with.
 
 The SPA runs against the gateway through Vite's proxy:
 
@@ -348,12 +439,14 @@ environment.
 openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out jwt-private.pem
 openssl rsa -pubout -in jwt-private.pem -out jwt-public.pem
 
-# Shared service-to-service token
-openssl rand -base64 32
-
 # Login password
 openssl rand -base64 24
 ```
+
+`ENCRYPT_KEY` and the shared service-to-service token are generated in "First
+run on a new machine" (steps 1 and 3). The token never goes into `deploy/.env`
+at all: it is generated and encrypted in one pipe, straight into
+`config-repo/`.
 
 Set `JWT_PRIVATE_KEY_PEM` and `JWT_PUBLIC_KEY_PEM` to the *contents* of those two
 files. Both or neither — `JwtKeys` refuses a half-configured pair. Leave both
@@ -373,29 +466,44 @@ one shared secret this leaves in `deploy/.env`: 32+ random bytes, generated
 with `openssl rand -base64 32`, given only to the Config Server container.
 Without it the server would serve every `{cipher}` value as `invalid.<name>`,
 and clients would fail later and more confusingly — a Bean validation error on
-a property that looks present but isn't — so `deploy/docker-compose.yml` gives
-config-server `ENCRYPT_KEY: ${ENCRYPT_KEY:?set ENCRYPT_KEY in deploy/.env}` and
-fails `compose up` immediately instead if it is unset.
+a property that looks present but isn't. Worse, `POST /encrypt` would still
+answer, with ciphertext under a key anyone can guess. So the Config Server
+refuses to start when `ENCRYPT_KEY` is missing or blank (`EncryptKeyGuard`),
+with an error that names it, from the IDE and the host as well as in Docker.
+`deploy/docker-compose.yml` also gives config-server
+`ENCRYPT_KEY: ${ENCRYPT_KEY:?set ENCRYPT_KEY in deploy/.env}`. Compose checks
+that whenever it reads the file, so while the key is unset every `docker
+compose` command against it fails with that message: `ps`, `logs`, `config`
+and `down` as well as `up`.
 
-To encrypt a new value against a running Config Server:
+To encrypt a new value against a running Config Server (one started with the
+same `ENCRYPT_KEY` as `deploy/.env`), type it at a silent prompt:
 
 ```bash
-curl -s -X POST -H 'Content-Type: text/plain' --data-binary 'the-plaintext' \
-     http://localhost:8888/encrypt
+read -rs VALUE && printf '%s' "$VALUE" \
+  | curl -s -X POST -H 'Content-Type: text/plain' --data-binary @- http://localhost:8888/encrypt; unset VALUE
 ```
 
-`/encrypt` needs `text/plain` and the raw body (`--data-binary`) — a
-form-encoded POST gets mangled. Write the result into config-repo as
-`some-key: '{cipher}<ciphertext>'`: single-quoted, because unquoted YAML reads
-`{cipher}…` as a flow mapping, not a string. `POST /decrypt` with the same
-body shape reverses it, useful for checking a value without waiting on a
-service restart.
+`/encrypt` needs `text/plain` and the raw body (`--data-binary`); a
+form-encoded POST gets mangled. The value travels on stdin (`@-`), not the
+command line, so it never lands in shell history or the process list.
+`printf '%s'` sends it without the trailing newline that `echo` would add,
+which would otherwise be encrypted as part of the value. Write the result into
+config-repo as `some-key: '{cipher}<ciphertext>'`: single-quoted, because
+unquoted YAML reads `{cipher}…` as a flow mapping, not a string. `POST
+/decrypt` with the same body shape reverses it, useful for checking a value
+without waiting on a service restart. It is just as unauthenticated, which
+makes it a decryption oracle for anything on the Compose network: a
+`{cipher}` value is plaintext to anyone who can reach port 8888. That is the
+same trust boundary as the Config Server's other endpoints, described below.
 
 The ciphertext committed here belongs to this deployment. `ENCRYPT_KEY` is
 generated once per environment and never reused, so standing up a new
-deployment means generating a fresh key and re-encrypting `INTERNAL_SERVICE_TOKEN`,
-`GOOGLE_CLIENT_SECRET` and anything else added under this scheme with it —
-the old ciphertext will not decrypt under a new key.
+deployment means generating a fresh key, re-encrypting the internal token, the
+Google client secret and anything else added under this scheme with it, and
+rebuilding the Config Server image so it carries the new ciphertext. The old
+ciphertext will not decrypt under a new key. "First run on a new machine" has
+the steps.
 
 Encryption protects config-repo's contents at rest (in git, on disk) — it does
 not change who can read a running Config Server's HTTP responses, which are
@@ -528,7 +636,7 @@ demand; `GET /api/v1/rag/sync/check` reports it without acting.
 
 ## Known risks after Phase 6
 
-- **Resolved in Phase 6 (Tasks 1–2): the Drive OAuth callback checked no
+- **Resolved in Phase 6: the Drive OAuth callback checked no
   `state`.** `DriveAuthManager.authUrl()` used to set no `state` parameter, and
   storage-service's `AuthController` callback accepted any `code`. The OAuth
   client id and the redirect URI are both public, and both callback paths are
@@ -549,7 +657,7 @@ demand; `GET /api/v1/rag/sync/check` reports it without acting.
 - **Config Server has no authentication.** `config-server` carries no Spring
   Security either, so anything that can reach port 8888 gets every decrypted
   value in `config-repo/` — `bloom.security.internal-token` and
-  `bloom.storage.google.client-secret` included — served as plaintext HTTP
+  `bloom.storage.client-secret` included — served as plaintext HTTP
   responses. Compose binds 8888 to `127.0.0.1` and the Compose network, the
   same mitigation as Eureka. Phase 6 does not change this — see "What Phase 6
   does not do".
@@ -641,10 +749,14 @@ export COMPOSE_FILE=deploy/docker-compose.yml COMPOSE_PROFILES=infra,platform,ap
    a literal such as `topK: 8`. Compose sets `RAG_TOP_K` on retrieval-service,
    so editing only the default after the colon changes nothing.
 
-   Since Task 4, `config-repo/` is baked into the Config Server's image (see
+   Since Phase 6, `config-repo/` is baked into the Config Server's image (see
    "Three things that look like misconfiguration and are not"), so the edit on
    its own does not reach it. Either sync it live with Compose Watch, left
-   running in another terminal —
+   running in another terminal. Its sync rule sets `initial_sync: true`, so
+   Watch also copies an edit made before it started. That first copy logs
+   nothing of its own: once Watch prints `Watch enabled`, the edit is in the
+   container. An edit made while Watch runs logs `Syncing service
+   "config-server" after 1 changes were detected` —
 
    ```bash
    docker compose -f deploy/docker-compose.yml --profile platform watch --no-up config-server
@@ -659,7 +771,7 @@ export COMPOSE_FILE=deploy/docker-compose.yml COMPOSE_PROFILES=infra,platform,ap
 
    Then refresh retrieval-service — no restart. `POST /actuator/refresh` needs
    authentication (a JWT or `X-Internal-Token`; `INTERNAL_SERVICE_TOKEN` is no
-   longer in any service's environment as of Task 4, so a JWT from "Login and
+   longer in any service's environment as of Phase 6, so a JWT from "Login and
    security" is the credential to use here). Retrieval's port is not
    published, so the call is made from inside its container; get the token on
    the host first and pass it as a direct argument to `exec`, not through
@@ -715,6 +827,7 @@ Every place the build disagrees with the design spec or the phase plan, and why.
 | Phase 0 and Phase 5 plans: host ports published on every interface (`"7687:7687"`, `"8761:8761"`, …) | Every published port except `api-gateway` (8080) and `frontend` (3000) binds to `127.0.0.1` | They are admin and datastore ports, most with no authentication — Eureka accepts anonymous registrations. Loopback keeps the dashboards usable on this machine and takes them off the network |
 | Spec §9.3: breakers "on the two genuinely external boundaries", ai-service → Gemini and storage-service → Drive | Those two, plus one on every `@FeignClient` between services (Phase 5 plan, Task 6) | A peer that is down or slow would otherwise hold each caller's request thread for the full Feign timeout; with a breaker the caller fails fast and gets a clean `503` or its own retry path |
 | Spec §11: Config Server `native` backend listed against a git backend as the production alternative | Native backend kept: `config-repo/` is baked into the Config Server image at build time (`deploy/Dockerfile.service`, target `config-server`), and `docker compose … watch config-server` syncs live edits into the running container with no rebuild | One deployment: config is versioned with the code in the same commits, with no deploy credential and no boot-time network dependency to a second repository. Move to a git backend when several deployments need to share config |
+| Spec §9.1: "Secrets are `${ENV_VAR}` placeholders resolved from the environment and are never committed" | `bloom.security.internal-token` and `bloom.storage.client-secret` are committed to `config-repo/` as `{cipher}` ciphertext; `ENCRYPT_KEY` is the only secret left in the environment (`deploy/.env`) | Phase 6's exit criterion: `ENCRYPT_KEY` replaces `INTERNAL_SERVICE_TOKEN` and `GOOGLE_CLIENT_SECRET` as the only shared secret in the environment. The ciphertext is useless without the key, which is never committed. The cost is that each deployment encrypts its own values ("First run on a new machine") |
 
 ## Phase verification log
 

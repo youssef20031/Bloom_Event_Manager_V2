@@ -48,7 +48,7 @@ bloom:
   security:
     # Stamped by the gateway on forwarded requests; lets Kafka-triggered
     # service-to-service calls (no user, no JWT) authenticate as SERVICE.
-    # Committed as {cipher} ciphertext (Task 4): the Config Server decrypts it
+    # Committed as {cipher} ciphertext (Phase 6): the Config Server decrypts it
     # with ENCRYPT_KEY before serving it, so no client ever needs the token in
     # its own environment. Single-quoted -- unquoted, YAML reads {cipher}... as
     # a flow mapping. This ciphertext belongs to this deployment; a new
