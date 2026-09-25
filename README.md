@@ -10,7 +10,10 @@ questions are settled by reading V1, and the phase verification log below
 records the parity runs made against V1's own Neo4j, MongoDB and Drive folder.
 
 - **Design spec:** `docs/superpowers/specs/2026-08-30-bloom-spring-microservices-design.md`
-- **Current phase:** Phase 5 — cutover and polish
+- **Status:** every planned phase is complete — the spec's Phases 0–5, plus
+  Phase 6 (no host mounts, encrypted secrets, OAuth `state` nonce), merged
+  2026-09-25 as PR #7. What is still open is listed under "Known risks after
+  Phase 6".
 
 ## Architecture
 
@@ -401,10 +404,12 @@ carries both:
   a Kafka-triggered call such as storage reacting to `bloom.documents.indexed`
   has no request to copy a header from.
 
-Verified rather than assumed: restarting `retrieval-service` with a deliberately
-mismatched `INTERNAL_SERVICE_TOKEN` and then asking the Event Advisor a question
-still succeeds, which is only possible if the forwarded JWT is what authenticates
-the `chat -> retrieval` hop.
+Verified rather than assumed (Phase 5): restarting `retrieval-service` with a
+deliberately mismatched internal token and then asking the Event Advisor a
+question still succeeds, which is only possible if the forwarded JWT is what
+authenticates the `chat -> retrieval` hop. The token was then the
+`INTERNAL_SERVICE_TOKEN` environment variable; since Phase 6 it is the `{cipher}`
+value in `config-repo/application.yml`.
 
 The Feign call does not run on the request thread, and the JWT survives anyway.
 `Resilience4JCircuitBreakerFactory` gives every breaker an `ExecutorService`
@@ -661,6 +666,13 @@ demand; `GET /api/v1/rag/sync/check` reports it without acting.
   responses. Compose binds 8888 to `127.0.0.1` and the Compose network, the
   same mitigation as Eureka. Phase 6 does not change this — see "What Phase 6
   does not do".
+- **A Mongo outage makes the OAuth endpoints slow, not broken.** Since Phase 6,
+  `/sync/status` mints a `state` nonce whenever Drive is configured but not
+  connected, and the callback redeems one — both in Mongo. When Mongo is down
+  both degrade correctly (status omits `authUrl`; the callback redirects to
+  `/?auth=error` and exchanges nothing), but only after the Mongo driver's
+  default 30 s server-selection timeout, because no `serverSelectionTimeoutMS`
+  is set on `MONGO_URI`. Setting one is the follow-up.
 
 ### What Phase 6 does not do
 
@@ -1622,15 +1634,79 @@ the images were ready.
 | OAuth `state`, step 3 — nonce present | `db.oauthstates.countDocuments({})` → `1`, the nonce minted in step 1 (the forged attempt's `state=forged` never matched it, so `findAndRemove` never touched it) |
 | OAuth `state`, step 4 — a real consent succeeds | A fresh `authUrl` minted with `?force=true` and completed in the browser by a human, same Google account: the browser landed on `/?auth=success`; `oauthstates` went `1` → `0` (the callback redeemed the nonce); the stored Drive token's `updatedAt` moved from 11:12:27 to 12:01:42 UTC; storage-service logged `Google Drive authentication successful, token saved` at 12:01:42 with no `Rejected` or `callback failed` line; `/sync/status` → `isAuthenticated: true` |
 
-### Nothing new to fix
+### The bring-up itself found nothing new
 
-Unlike the two Phase 5 verification passes, this run found no defect: the
+Unlike the two Phase 5 verification passes, the bring-up found no defect: the
 containers, the bind-mount removal, the encrypted secrets and the OAuth nonce
 all behaved exactly as their commits describe on the first bring-up from the
 committed file. The interesting failure mode this phase closes off — an
 operator's Docker file-sharing configuration blocking Compose entirely — simply
 did not arise, because nothing under `deploy/docker-compose.yml` still asks for
-a host path.
+a host path. The defects were elsewhere: in failure paths a happy-path bring-up
+never takes, and in instructions nobody had followed yet.
+
+### Found along the way, fixed
+
+- **Encrypted secrets carried a trailing newline.** The first encryption piped
+  `grep | cut` straight into `curl --data-binary @-`, so `/encrypt` received
+  `<secret>\n`. A round-trip check missed it, because `$(...)` strips the
+  newline from both sides of the comparison; comparing lengths after decoding
+  the served JSON (44 against 43) caught it. Both values were re-encrypted, and
+  every documented `/encrypt` command now uses `printf '%s' … | curl
+  --data-binary @-`.
+- **Demo step 8 stopped working twice over.** It read `$INTERNAL_SERVICE_TOKEN`
+  from inside the container, which no longer has it, and it edited
+  `config-repo/` on the host, which the baked-in Config Server no longer reads.
+  It now refreshes with a login JWT and delivers the edit through Compose Watch.
+
+### Found by the final review, fixed
+
+- **A Config Server with no `ENCRYPT_KEY` started, and encrypted under a known
+  key.** Boot leaves an unresolvable placeholder as literal text, so
+  `encrypt.key` became the string `${ENCRYPT_KEY}`: the server came up,
+  `/encrypt/status` said `OK`, and `/encrypt` produced ciphertext anyone could
+  decrypt. Compose's `:?` guard only ever covered Docker. `EncryptKeyGuard` now
+  resolves the key strictly at startup and rejects a blank one;
+  `EncryptKeyRequiredTests` covers both.
+- **The gateway started healthy with no internal token** — it bound the
+  literal `${bloom.security.internal-token}` and stamped it on forwarded
+  traffic. It now reads `${bloom.security.internal-token:}`, so `@NotBlank`
+  fails at startup; `InternalTokenMappingTests` exercises the mapping itself.
+- **A fresh clone could not start.** The committed ciphertext decrypts only
+  under this deployment's key, and nothing said how to make your own. "First
+  run on a new machine" and "Upgrading from Phase 5" are the fix.
+- **Compose Watch missed edits made before it started.** The sync rule now has
+  `initial_sync: true`.
+- **A Mongo outage reached the OAuth endpoints** as errors: `/sync/status`
+  failed whenever Drive was configured but not connected, and a failing redeem
+  answered the browser with a 500. Both now degrade and still fail closed —
+  status omits `authUrl`, and the callback redirects to `/?auth=error` without
+  exchanging the code.
+- **The successful OAuth path had never run against a real Mongo.**
+  `OAuthStateStoreIntegrationTests` (Testcontainers) mints, redeems once,
+  refuses the replay, refuses an expired state, and checks the TTL index; the
+  real consent in the table above covers it live.
+- Documentation: every `docker compose` command, not just `up`, needs
+  `ENCRYPT_KEY`; the `/encrypt` example no longer puts plaintext in shell
+  history; the unauthenticated `/decrypt` is called out as a decryption oracle;
+  the deviations log gained spec §9.1.
+
+### Re-verified after the fixes
+
+`./mvnw -q clean install` — **exit 0**, **405 tests, 0 failures, 0 errors, 0
+skipped**, over 96 surefire reports.
+
+| Check | Evidence |
+| --- | --- |
+| Changed services | config-server, api-gateway and storage-service rebuilt and recreated one at a time (`up -d --build --no-deps`), each `healthy` before the next; the other thirteen containers untouched |
+| Fleet | Login → `200`; `/api/v1/rag/retrieve` → `200`; forged callback → `307` → `302 /?auth=error` |
+| Keyless Config Server | The built jar with `ENCRYPT_KEY` unset exits `1`, and the error names `ENCRYPT_KEY` |
+| Demo step 8, in its documented order | An edit made before Watch started arrived via `initial_sync`; `POST /actuator/refresh` → `["bloom.retrieval.topK"]`, and again for the revert |
+| Real Google consent | Row "OAuth `state`, step 4" above |
+
+After the merge, the Phase 5 override's scratch volumes (`bloom-pdfs`, empty,
+and four `bloom-config-repo*` copies of committed config) were deleted; nothing
+referenced them.
 
 ## Repository layout
 
