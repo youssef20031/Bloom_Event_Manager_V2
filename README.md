@@ -1620,6 +1620,7 @@ the images were ready.
 | OAuth `state`, step 2 — no token exchange attempted | `docker logs bloom-v2-storage-service-1 \| grep -c "Rejected Google OAuth callback"` → `1` (exactly the forged attempt); `grep -c "OAuth callback failed"` → `0` — `states.consume(state)` returned `false` before `auth.authenticate(code)` was ever reached |
 | OAuth `state`, step 3 — TTL index | `docker exec bloom-v2-mongo mongosh --quiet tokendb --eval 'printjson(db.oauthstates.getIndexes())'` → an `expiresAt_1` index with `expireAfterSeconds: 0`, alongside `_id_`. `MONGO_TOKEN_DB` is unset in `deploy/.env`, so the database is the default `tokendb` |
 | OAuth `state`, step 3 — nonce present | `db.oauthstates.countDocuments({})` → `1`, the nonce minted in step 1 (the forged attempt's `state=forged` never matched it, so `findAndRemove` never touched it) |
+| OAuth `state`, step 4 — a real consent succeeds | A fresh `authUrl` minted with `?force=true` and completed in the browser by a human, same Google account: the browser landed on `/?auth=success`; `oauthstates` went `1` → `0` (the callback redeemed the nonce); the stored Drive token's `updatedAt` moved from 11:12:27 to 12:01:42 UTC; storage-service logged `Google Drive authentication successful, token saved` at 12:01:42 with no `Rejected` or `callback failed` line; `/sync/status` → `isAuthenticated: true` |
 
 ### Nothing new to fix
 
